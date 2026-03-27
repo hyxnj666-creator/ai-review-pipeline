@@ -1,0 +1,48 @@
+{
+  "name": "ai-review-pipeline",
+  "version": "1.0.0",
+  "description": "AI-powered code review & quality pipeline CLI. Review → Auto-fix → Re-review → Test → Report.",
+  "type": "module",
+  "bin": {
+    "ai-review-pipeline": "./bin/cli.mjs",
+    "ai-rp": "./bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "echo \"No tests yet\""
+  },
+  "keywords": [
+    "ai",
+    "code-review",
+    "pipeline",
+    "openai",
+    "quality",
+    "cli",
+    "review",
+    "auto-fix",
+    "testing",
+    "devtools"
+  ],
+  "author": "Feng Liu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liufeng/ai-review-pipeline"
+  },
+  "homepage": "https://github.com/liufeng/ai-review-pipeline#readme",
+  "peerDependencies": {
+    "https-proxy-agent": ">=6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "https-proxy-agent": {
+      "optional": true
+    }
+  }
+}

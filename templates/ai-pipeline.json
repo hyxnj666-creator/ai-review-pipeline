@@ -1,0 +1,33 @@
+{
+  "review": {
+    "threshold": 95,
+    "maxRounds": 3,
+    "model": "",
+    "maxDiffLines": 1500,
+    "customRules": [
+      "禁止使用 any 类型",
+      "API Key / Secret 不得硬编码"
+    ]
+  },
+  "fix": {
+    "enabled": false,
+    "requireConfirm": true,
+    "safetyMinRatio": 0.5
+  },
+  "test": {
+    "enabled": true,
+    "stack": "auto",
+    "maxCases": 8
+  },
+  "report": {
+    "format": "html",
+    "outputDir": ".ai-reports",
+    "open": true
+  },
+  "ignore": [
+    "node_modules/**",
+    "dist/**",
+    "*.min.js",
+    "*.lock"
+  ]
+}
