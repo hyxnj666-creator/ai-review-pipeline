@@ -36,7 +36,7 @@ ${issueList}
 ${source}
 \`\`\``;
 
-  const { content } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.2 });
+  const { content } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.2, provider: env.provider });
   const codeMatch = content.match(/```(?:\w+)?\s*\n([\s\S]*?)```/);
   if (!codeMatch) return false;
 
@@ -102,7 +102,7 @@ async function generateTests({ files, env, model, config }) {
 
 ${sourceSnippets}`;
 
-  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4 });
+  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4, provider: env.provider });
   log('📊', `Test Tokens: ${tokens?.total_tokens || 'N/A'}`);
   return content;
 }
@@ -112,7 +112,7 @@ export async function run(args) {
   loadEnv();
   const config = loadConfig();
   const env = getEnvConfig();
-  const model = config.review.model || env.model || 'gpt-4o-mini';
+  const model = config.review.model || env.model;
 
   if (!env.apiKey) { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
 
@@ -134,7 +134,7 @@ export async function run(args) {
   const modeLabel = dryRun ? t('modeDryRun') : t('modeFix');
   log('⚙️', t('mode', modeLabel));
   if (file) log('📂', t('target', full ? `${file} (full)` : file));
-  log('⚙️', `${t('model', model)} | ${t('threshold', threshold)} | ${t('maxRounds', dryRun ? 1 : maxRounds)}`);
+  log('⚙️', `${t('provider', env.provider)} | ${t('model', model)} | ${t('threshold', threshold)} | ${t('maxRounds', dryRun ? 1 : maxRounds)}`);
   if (!dryRun) {
     log('⚙️', `${t('autoCommit', !noCommit)} | ${t('autoTest', !noTest)}`);
   }
@@ -161,7 +161,7 @@ export async function run(args) {
 
     log('📏', `${diff.split('\n').length} lines`);
     const prompt = buildPrompt(truncated, config.review.customRules || []);
-    const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt });
+    const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, provider: env.provider });
     lastReview = parseReview(content);
 
     console.log('\n' + lastReview.markdown + '\n');

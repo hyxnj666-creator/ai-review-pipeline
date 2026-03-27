@@ -9,6 +9,7 @@ AI 驱动的代码质量流水线 CLI —— Review → 自动修复 → 再审 
 ## 特性
 
 - **零依赖** — 无 required dependencies，`npx` 秒级执行
+- **多 AI 模型** — OpenAI / DeepSeek / Claude / 通义千问 / Gemini / Ollama，自动识别
 - **三种模式** — `review`（只读）/ `fix`（自动修复循环）/ `--dry-run`（出报告不阻断）
 - **灵活目标** — 支持文件、文件夹、逗号分隔多目标
 - **`--full` 完整审查** — 无需 git 改动，直接对完整文件做质量审查
@@ -21,9 +22,25 @@ AI 驱动的代码质量流水线 CLI —— Review → 自动修复 → 再审 
 ## 快速开始
 
 ```bash
-# 1. 配置 API Key（任选一种）
-export OPENAI_API_KEY=sk-xxx
-# 或写入 .env.local：echo 'OPENAI_API_KEY=sk-xxx' >> .env.local
+# 1. 配置 API Key（任选一种模型服务，写入 .env.local）
+
+# OpenAI
+echo 'OPENAI_API_KEY=sk-xxx' >> .env.local
+
+# DeepSeek（国内推荐，便宜好用）
+echo 'DEEPSEEK_API_KEY=sk-xxx' >> .env.local
+
+# Claude
+echo 'ANTHROPIC_API_KEY=sk-ant-xxx' >> .env.local
+
+# 通义千问
+echo 'DASHSCOPE_API_KEY=sk-xxx' >> .env.local
+
+# Google Gemini
+echo 'GEMINI_API_KEY=xxx' >> .env.local
+
+# 本地 Ollama（无需 Key，启动 ollama serve 即可）
+echo 'AI_REVIEW_PROVIDER=ollama' >> .env.local
 
 # 2. Review 代码（不安装，直接跑）
 npx ai-review-pipeline review
@@ -246,6 +263,57 @@ ai-rp init    # 在项目根目录生成 .ai-pipeline.json
 
 ---
 
+## 支持的 AI 模型
+
+| Provider | 默认模型 | 环境变量 | 说明 |
+|----------|---------|---------|------|
+| **OpenAI** | `gpt-4o-mini` | `OPENAI_API_KEY` | 默认 Provider |
+| **DeepSeek** | `deepseek-chat` | `DEEPSEEK_API_KEY` | 国内推荐，性价比高 |
+| **Claude** | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` | 代码能力强 |
+| **通义千问** | `qwen-plus` | `DASHSCOPE_API_KEY` | 阿里云 |
+| **Gemini** | `gemini-2.0-flash` | `GEMINI_API_KEY` | Google |
+| **Ollama** | `qwen2.5-coder` | 无需 Key | 本地部署，隐私安全 |
+| **自定义** | — | `AI_REVIEW_API_KEY` | 任何 OpenAI 兼容 API |
+
+### 自动识别
+
+工具会自动识别 Provider：
+- `sk-ant-` 开头的 Key → Claude
+- `DEEPSEEK_API_KEY` → DeepSeek
+- `ANTHROPIC_API_KEY` → Claude
+- `DASHSCOPE_API_KEY` → 通义千问
+- `GEMINI_API_KEY` → Gemini
+
+也可手动指定：
+
+```bash
+# .env.local
+AI_REVIEW_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-xxx
+
+# 或自定义兼容 API
+AI_REVIEW_PROVIDER=custom
+AI_REVIEW_API_KEY=sk-xxx
+AI_REVIEW_BASE_URL=https://your-api.com/v1
+AI_REVIEW_MODEL=your-model
+```
+
+### Ollama 本地部署
+
+```bash
+# 1. 安装 Ollama: https://ollama.com
+# 2. 拉取模型
+ollama pull qwen2.5-coder
+
+# 3. 配置
+echo 'AI_REVIEW_PROVIDER=ollama' >> .env.local
+
+# 4. 使用
+npx ai-review-pipeline review --file src/utils.ts --full
+```
+
+---
+
 ## 配置文件
 
 运行 `ai-rp init` 生成 `.ai-pipeline.json`，提交到 git 团队共享：
@@ -286,15 +354,20 @@ ai-rp init    # 在项目根目录生成 .ai-pipeline.json
 
 ## 环境变量
 
-| 变量 | 说明 | 必填 |
-|------|------|------|
-| `OPENAI_API_KEY` | OpenAI API Key | 是 |
-| `AI_REVIEW_API_KEY` | 覆盖 OPENAI_API_KEY | 否 |
-| `AI_REVIEW_BASE_URL` | 自定义 API 地址（兼容 OpenAI 接口的服务） | 否 |
-| `AI_REVIEW_MODEL` | 覆盖默认模型 | 否 |
-| `HTTPS_PROXY` | HTTP 代理（需安装 https-proxy-agent） | 否 |
+| 变量 | 说明 |
+|------|------|
+| `OPENAI_API_KEY` | OpenAI API Key |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API Key |
+| `DASHSCOPE_API_KEY` | 阿里通义千问 API Key |
+| `GEMINI_API_KEY` | Google Gemini API Key |
+| `AI_REVIEW_API_KEY` | 通用 Key（优先级最高，覆盖以上所有） |
+| `AI_REVIEW_PROVIDER` | 手动指定 Provider（openai/deepseek/claude/qwen/gemini/ollama/custom） |
+| `AI_REVIEW_BASE_URL` | 自定义 API 地址 |
+| `AI_REVIEW_MODEL` | 覆盖默认模型 |
+| `HTTPS_PROXY` | HTTP 代理（需安装 https-proxy-agent） |
 
-支持 `.env.local` 和 `.env` 文件自动加载。
+支持 `.env.local` 和 `.env` 文件自动加载。只需配置对应 Provider 的 Key，工具自动识别。
 
 ## CI/CD 集成
 
@@ -365,17 +438,34 @@ ai-rp init                                          # 生成配置文件
 
 ### What is this?
 
-An AI-powered code quality CLI tool. One command to review, auto-fix, test, and report.
+An AI-powered code quality CLI tool. One command to review, auto-fix, test, and report. Supports **OpenAI, DeepSeek, Claude, Qwen, Gemini, Ollama** and any OpenAI-compatible API.
 
 ### Quick Start
 
 ```bash
-export OPENAI_API_KEY=sk-xxx
+# Any ONE of these (tool auto-detects provider)
+echo 'OPENAI_API_KEY=sk-xxx' >> .env.local        # OpenAI
+echo 'DEEPSEEK_API_KEY=sk-xxx' >> .env.local       # DeepSeek (cheap & good)
+echo 'ANTHROPIC_API_KEY=sk-ant-xxx' >> .env.local   # Claude
+echo 'AI_REVIEW_PROVIDER=ollama' >> .env.local      # Local Ollama (no key)
+
 npx ai-review-pipeline review                          # Review code
 npx ai-review-pipeline fix                             # Full pipeline
 npx ai-review-pipeline fix --dry-run                   # Report only, no changes
 npx ai-review-pipeline review --file src/a.vue --full  # Review full file
 ```
+
+### Supported Providers
+
+| Provider | Default Model | Env Var |
+|----------|--------------|---------|
+| OpenAI | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| DeepSeek | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| Claude | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
+| Qwen | `qwen-plus` | `DASHSCOPE_API_KEY` |
+| Gemini | `gemini-2.0-flash` | `GEMINI_API_KEY` |
+| Ollama | `qwen2.5-coder` | No key needed |
+| Custom | — | `AI_REVIEW_API_KEY` + `AI_REVIEW_BASE_URL` |
 
 ### Commands
 
@@ -396,14 +486,6 @@ npx ai-review-pipeline review --file src/a.vue --full  # Review full file
 | `--full` | Review full file content, use with `--file` |
 | `--dry-run` | Report only, no changes, no blocking (all commands) |
 | `--lang <zh\|en>` | Output language (default: zh) |
-
-### `--file` vs `--full`
-
-```bash
-ai-rp review --file src/a.vue          # Only git changes for that file
-ai-rp review --file src/a.vue --full   # Full file content (no git changes needed)
-ai-rp review                           # All staged/HEAD git changes
-```
 
 ### Install
 

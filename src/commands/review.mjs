@@ -63,7 +63,7 @@ export async function run(args) {
   loadEnv();
   const config = loadConfig();
   const env = getEnvConfig();
-  const model = config.review.model || env.model || 'gpt-4o-mini';
+  const model = config.review.model || env.model;
 
   if (!env.apiKey) { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
 
@@ -98,12 +98,12 @@ export async function run(args) {
 
   if (!jsonOutput) {
     console.log(`📝 ${t('diffLines', totalLines, diffLabel, truncated)}`);
-    console.log(`⚙️  ${t('model', model)} | ${t('threshold', config.review.threshold)}`);
+    console.log(`⚙️  ${t('provider', env.provider)} | ${t('model', model)} | ${t('threshold', config.review.threshold)}`);
   }
 
   const t0 = Date.now();
   const prompt = buildPrompt(diff, config.review.customRules || []);
-  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt });
+  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, provider: env.provider });
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   const review = parseReview(content);

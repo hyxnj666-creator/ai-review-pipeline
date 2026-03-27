@@ -1,7 +1,8 @@
 export default {
-  noApiKey: '缺少 API Key，请配置环境变量 OPENAI_API_KEY 或 AI_REVIEW_API_KEY（支持 .env.local）',
+  noApiKey: '缺少 API Key，请配置对应环境变量（支持 .env.local）:\n  OpenAI:   OPENAI_API_KEY\n  DeepSeek: DEEPSEEK_API_KEY\n  Claude:   ANTHROPIC_API_KEY\n  通义千问: DASHSCOPE_API_KEY\n  Gemini:   GEMINI_API_KEY\n  通用:     AI_REVIEW_API_KEY',
   noChanges: '没有检测到代码变更。',
   diffLines: (n, label, trunc) => `检测到 ${n} 行变更（${label}）${trunc ? '，已截断' : ''}`,
+  provider: (p) => `Provider: ${p}`,
   model: (m) => `模型: ${m}`,
   threshold: (t) => `阈值: ${t}`,
   maxRounds: (n) => `最大轮次: ${n}`,
@@ -93,6 +94,18 @@ test 参数:
 --file 与 --full 的区别:
   --file src/a.vue          只 review 该文件的 git 改动部分
   --file src/a.vue --full   review 完整文件内容（无需 git 改动）
+
+支持的 AI Provider:
+  openai      OpenAI（默认）         OPENAI_API_KEY
+  deepseek    DeepSeek              DEEPSEEK_API_KEY
+  claude      Anthropic Claude      ANTHROPIC_API_KEY
+  qwen        通义千问              DASHSCOPE_API_KEY
+  gemini      Google Gemini         GEMINI_API_KEY
+  ollama      本地 Ollama           无需 Key
+  custom      自定义 OpenAI 兼容    AI_REVIEW_API_KEY + AI_REVIEW_BASE_URL
+
+  自动识别 Provider（根据 Key 前缀或 Base URL），也可手动指定:
+  AI_REVIEW_PROVIDER=deepseek
 
 示例:
   npx ai-rp review --file src/utils.ts              # 只看 git 改动

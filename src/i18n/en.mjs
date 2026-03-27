@@ -1,7 +1,8 @@
 export default {
-  noApiKey: 'Missing API Key. Set OPENAI_API_KEY or AI_REVIEW_API_KEY in .env.local or environment.',
+  noApiKey: 'Missing API Key. Set one of the following in .env.local or environment:\n  OpenAI:   OPENAI_API_KEY\n  DeepSeek: DEEPSEEK_API_KEY\n  Claude:   ANTHROPIC_API_KEY\n  Qwen:     DASHSCOPE_API_KEY\n  Gemini:   GEMINI_API_KEY\n  Generic:  AI_REVIEW_API_KEY',
   noChanges: 'No code changes detected.',
   diffLines: (n, label, trunc) => `Detected ${n} lines of changes (${label})${trunc ? ', truncated' : ''}`,
+  provider: (p) => `Provider: ${p}`,
   model: (m) => `Model: ${m}`,
   threshold: (t) => `Threshold: ${t}`,
   maxRounds: (n) => `Max rounds: ${n}`,
@@ -93,6 +94,18 @@ test options:
 --file vs --full:
   --file src/a.vue          Review only git changes for that file
   --file src/a.vue --full   Review entire file content (no git changes needed)
+
+Supported AI Providers:
+  openai      OpenAI (default)      OPENAI_API_KEY
+  deepseek    DeepSeek              DEEPSEEK_API_KEY
+  claude      Anthropic Claude      ANTHROPIC_API_KEY
+  qwen        Alibaba Qwen          DASHSCOPE_API_KEY
+  gemini      Google Gemini         GEMINI_API_KEY
+  ollama      Local Ollama          No key needed
+  custom      OpenAI-compatible     AI_REVIEW_API_KEY + AI_REVIEW_BASE_URL
+
+  Auto-detects provider from API key prefix or base URL.
+  Override: AI_REVIEW_PROVIDER=deepseek
 
 Examples:
   npx ai-rp review --file src/utils.ts              # git changes only

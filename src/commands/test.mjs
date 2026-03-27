@@ -22,7 +22,7 @@ export async function run(args) {
   loadEnv();
   const config = loadConfig();
   const env = getEnvConfig();
-  const model = config.review.model || env.model || 'gpt-4o-mini';
+  const model = config.review.model || env.model;
 
   if (!env.apiKey) { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
 
@@ -107,7 +107,7 @@ ${sourceCode}
 \`\`\``;
 
   const t0 = Date.now();
-  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4 });
+  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4, provider: env.provider });
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   separator(t('testTitle'));

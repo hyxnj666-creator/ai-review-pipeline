@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { resolveProvider, getProviderDefaults } from './ai-client.mjs';
 
 const DEFAULTS = {
   review: {
@@ -47,10 +48,28 @@ export function loadConfig(cwd = process.cwd()) {
 }
 
 export function getEnvConfig() {
+  const apiKey = process.env.AI_REVIEW_API_KEY
+    || process.env.OPENAI_API_KEY
+    || process.env.DEEPSEEK_API_KEY
+    || process.env.ANTHROPIC_API_KEY
+    || process.env.DASHSCOPE_API_KEY
+    || process.env.GEMINI_API_KEY
+    || '';
+
+  const baseUrl = process.env.AI_REVIEW_BASE_URL || '';
+  const providerHint = process.env.AI_REVIEW_PROVIDER || '';
+  const model = process.env.AI_REVIEW_MODEL || '';
+  const proxy = process.env.HTTPS_PROXY || '';
+
+  const env = { apiKey, baseUrl, provider: providerHint, model, proxy };
+  const provider = resolveProvider(env);
+  const defaults = getProviderDefaults(provider);
+
   return {
-    apiKey: process.env.AI_REVIEW_API_KEY || process.env.OPENAI_API_KEY || '',
-    baseUrl: process.env.AI_REVIEW_BASE_URL || 'https://api.openai.com/v1',
-    model: process.env.AI_REVIEW_MODEL || '',
-    proxy: process.env.HTTPS_PROXY || '',
+    apiKey,
+    baseUrl: baseUrl || defaults.baseUrl,
+    model: model || defaults.defaultModel,
+    provider,
+    proxy,
   };
 }
