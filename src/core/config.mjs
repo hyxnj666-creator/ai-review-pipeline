@@ -5,7 +5,7 @@ import { resolveProvider, getProviderDefaults } from './ai-client.mjs';
 const DEFAULTS = {
   review: {
     threshold: 95,
-    maxRounds: 3,
+    maxRounds: 5,
     model: '',
     maxDiffLines: 1500,
     customRules: [],
