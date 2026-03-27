@@ -69,6 +69,7 @@ export async function run(args) {
 
   await initProxy(env.proxy);
 
+  const dryRun = args.includes('--dry-run');
   const noReport = args.includes('--no-report');
   const jsonOutput = args.includes('--json');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
@@ -114,12 +115,12 @@ export async function run(args) {
     threshold: config.review.threshold,
     elapsed,
     tokens,
-    mode: 'review',
+    mode: dryRun ? 'review (dry-run)' : 'review',
   };
 
   if (jsonOutput) {
     process.stdout.write(JSON.stringify({ ...review, meta }, null, 2));
-    process.exit(review.red > 0 ? 1 : 0);
+    process.exit(dryRun ? 0 : (review.red > 0 ? 1 : 0));
   }
 
   separator(t('reviewTitle'));
@@ -135,6 +136,12 @@ export async function run(args) {
   if (!noReport) {
     const reportPath = writeReport({ review, meta, outputDir: config.report.outputDir, open: config.report.open });
     log('📄', t('reportGenerated', reportPath));
+  }
+
+  if (dryRun) {
+    log('✅', t('resultDryRun'));
+    log('💡', t('dryRunDone'));
+    process.exit(0);
   }
 
   if (review.red > 0) process.exit(1);

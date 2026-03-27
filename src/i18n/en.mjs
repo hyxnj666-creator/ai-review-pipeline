@@ -68,6 +68,7 @@ Commands:
 
 Global options:
   --file <path>       Target file/folder/multi-path (comma-separated)
+  --dry-run           Report only, no changes, no blocking (works on all commands)
   --lang <zh|en>      Output language (default: zh)
   --help              Show help
   --version           Show version
@@ -79,7 +80,6 @@ review options:
   --no-report         Skip HTML report
 
 fix options:
-  --dry-run           Full pipeline → report only, no changes, no blocking
   --threshold <n>     Quality threshold (default: 95)
   --max-rounds <n>    Max fix rounds (default: 3)
   --no-commit         Don't auto-commit after fix
@@ -90,9 +90,9 @@ test options:
   --staged            Generate tests for staged files
 
 Examples:
-  npx ai-rp review
-  npx ai-rp review --file src/components
-  npx ai-rp fix --dry-run
+  npx ai-rp review --file src/utils.ts
+  npx ai-rp review --dry-run --file src/components
+  npx ai-rp fix --dry-run --file src/views
   npx ai-rp fix --threshold 90
   npx ai-rp test --file src/utils.ts
   npx ai-rp init

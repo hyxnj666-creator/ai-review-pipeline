@@ -68,6 +68,7 @@ ai-review-pipeline — AI 驱动的代码质量流水线
 
 通用参数:
   --file <path>       指定文件/文件夹/多目标（逗号分隔）
+  --dry-run           出报告不阻断，不修改代码，所有命令通用
   --lang <zh|en>      输出语言（默认中文）
   --help              显示帮助
   --version           显示版本
@@ -79,7 +80,6 @@ review 参数:
   --no-report         不生成 HTML 报告
 
 fix 参数:
-  --dry-run           跑全流程出报告，不修改代码不阻断
   --threshold <n>     质量阈值（默认 95）
   --max-rounds <n>    最大修复轮次（默认 3）
   --no-commit         修复后不自动提交
@@ -90,9 +90,9 @@ test 参数:
   --staged            为 staged 文件生成测试
 
 示例:
-  npx ai-rp review
-  npx ai-rp review --file src/components
-  npx ai-rp fix --dry-run
+  npx ai-rp review --file src/utils.ts
+  npx ai-rp review --dry-run --file src/components
+  npx ai-rp fix --dry-run --file src/views
   npx ai-rp fix --threshold 90
   npx ai-rp test --file src/utils.ts
   npx ai-rp init

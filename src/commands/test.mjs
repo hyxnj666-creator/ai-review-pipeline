@@ -28,6 +28,7 @@ export async function run(args) {
 
   await initProxy(env.proxy);
 
+  const dryRun = args.includes('--dry-run');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
   const staged = args.includes('--staged');
 
@@ -114,6 +115,10 @@ ${sourceCode}
   console.log();
   console.log('─'.repeat(60));
   log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${tokens ? ` | ${t('tokens', tokens.prompt_tokens, tokens.completion_tokens, tokens.total_tokens)}` : ''}`);
+  if (dryRun) {
+    log('✅', t('resultDryRun'));
+    log('💡', t('dryRunDone'));
+  }
   console.log('═'.repeat(60));
 }
 
