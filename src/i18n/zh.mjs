@@ -68,6 +68,7 @@ ai-review-pipeline — AI 驱动的代码质量流水线
 
 通用参数:
   --file <path>       指定文件/文件夹/多目标（逗号分隔）
+  --full              配合 --file 使用，审查完整文件（不依赖 git diff）
   --dry-run           出报告不阻断，不修改代码，所有命令通用
   --lang <zh|en>      输出语言（默认中文）
   --help              显示帮助
@@ -89,10 +90,15 @@ fix 参数:
 test 参数:
   --staged            为 staged 文件生成测试
 
+--file 与 --full 的区别:
+  --file src/a.vue          只 review 该文件的 git 改动部分
+  --file src/a.vue --full   review 完整文件内容（无需 git 改动）
+
 示例:
-  npx ai-rp review --file src/utils.ts
-  npx ai-rp review --dry-run --file src/components
-  npx ai-rp fix --dry-run --file src/views
+  npx ai-rp review --file src/utils.ts              # 只看 git 改动
+  npx ai-rp review --file src/utils.ts --full       # 审查完整文件
+  npx ai-rp review --dry-run --file src/ --full     # 审查整个文件夹
+  npx ai-rp fix --dry-run --file src/views --full   # 完整审查+报告
   npx ai-rp fix --threshold 90
   npx ai-rp test --file src/utils.ts
   npx ai-rp init

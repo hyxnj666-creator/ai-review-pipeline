@@ -119,6 +119,7 @@ export async function run(args) {
   await initProxy(env.proxy);
 
   const dryRun = args.includes('--dry-run');
+  const full = args.includes('--full');
   const noCommit = args.includes('--no-commit');
   const noTest = args.includes('--no-test');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
@@ -132,7 +133,7 @@ export async function run(args) {
   separator(`🚀 ${t('pipelineTitle')}`);
   const modeLabel = dryRun ? t('modeDryRun') : t('modeFix');
   log('⚙️', t('mode', modeLabel));
-  if (file) log('📂', t('target', file));
+  if (file) log('📂', t('target', full ? `${file} (full)` : file));
   log('⚙️', `${t('model', model)} | ${t('threshold', threshold)} | ${t('maxRounds', dryRun ? 1 : maxRounds)}`);
   if (!dryRun) {
     log('⚙️', `${t('autoCommit', !noCommit)} | ${t('autoTest', !noTest)}`);
@@ -147,7 +148,7 @@ export async function run(args) {
     round++;
     separator(`📝 ${t('roundTitle', round)}`);
 
-    const diff = getDiff({ file });
+    const diff = getDiff({ file, full });
     if (!diff.trim()) {
       log('✅', t('noChanges'));
       passed = true;
@@ -237,7 +238,7 @@ export async function run(args) {
   const shouldGenTests = dryRun ? !noTest : (passed && !noTest);
   if (shouldGenTests) {
     separator(`🧪 ${t('testTitle')}`);
-    const files = getChangedFiles({ file });
+    const files = getChangedFiles({ file, full });
     if (files.length > 0) {
       log('📂', t('testTarget', files.join(', ')));
       const testResult = await generateTests({ files, env, model, config });

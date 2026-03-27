@@ -68,6 +68,7 @@ Commands:
 
 Global options:
   --file <path>       Target file/folder/multi-path (comma-separated)
+  --full              Review full file content (ignores git diff), use with --file
   --dry-run           Report only, no changes, no blocking (works on all commands)
   --lang <zh|en>      Output language (default: zh)
   --help              Show help
@@ -89,10 +90,15 @@ fix options:
 test options:
   --staged            Generate tests for staged files
 
+--file vs --full:
+  --file src/a.vue          Review only git changes for that file
+  --file src/a.vue --full   Review entire file content (no git changes needed)
+
 Examples:
-  npx ai-rp review --file src/utils.ts
-  npx ai-rp review --dry-run --file src/components
-  npx ai-rp fix --dry-run --file src/views
+  npx ai-rp review --file src/utils.ts              # git changes only
+  npx ai-rp review --file src/utils.ts --full       # review full file
+  npx ai-rp review --dry-run --file src/ --full     # review entire folder
+  npx ai-rp fix --dry-run --file src/views --full   # full review + report
   npx ai-rp fix --threshold 90
   npx ai-rp test --file src/utils.ts
   npx ai-rp init

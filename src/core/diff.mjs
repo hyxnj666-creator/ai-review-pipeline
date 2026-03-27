@@ -40,11 +40,16 @@ function collectDirFiles(dir) {
   return results;
 }
 
-export function getDiff({ file, branch, staged } = {}) {
+export function getDiff({ file, branch, staged, full } = {}) {
   if (file) {
     const paths = file.split(',').map((s) => s.trim()).filter(Boolean);
-    const diff = exec(`git diff HEAD -- ${paths.join(' ')}`);
-    if (diff.trim()) return diff;
+    if (full) {
+      return paths.map((p) => readFileAsReview(p)).filter(Boolean).join('\n');
+    }
+    try {
+      const diff = exec(`git diff HEAD -- ${paths.join(' ')}`);
+      if (diff.trim()) return diff;
+    } catch { /* not in git repo or no diff, fall through */ }
     return paths.map((p) => readFileAsReview(p)).filter(Boolean).join('\n');
   }
   if (branch) return exec(`git diff ${branch}...HEAD`);
@@ -53,24 +58,31 @@ export function getDiff({ file, branch, staged } = {}) {
   return s || exec('git diff HEAD');
 }
 
-export function getChangedFiles({ file, staged } = {}) {
+function resolveFilePaths(paths) {
+  const result = [];
+  for (const p of paths) {
+    const fullPath = resolve(process.cwd(), p);
+    if (!existsSync(fullPath)) continue;
+    const stat = statSync(fullPath);
+    if (stat.isDirectory()) {
+      result.push(...collectDirFiles(fullPath).map((f) => relative(process.cwd(), f)));
+    } else if (CODE_EXT.test(p)) {
+      result.push(p);
+    }
+  }
+  return result;
+}
+
+export function getChangedFiles({ file, staged, full } = {}) {
   if (file) {
     const paths = file.split(',').map((s) => s.trim()).filter(Boolean);
-    const diffFiles = exec(`git diff HEAD --name-only --diff-filter=ACMR -- ${paths.join(' ')}`)
-      .trim().split('\n').filter(Boolean).filter((f) => CODE_EXT.test(f));
-    if (diffFiles.length) return diffFiles;
-    const result = [];
-    for (const p of paths) {
-      const full = resolve(process.cwd(), p);
-      if (!existsSync(full)) continue;
-      const stat = statSync(full);
-      if (stat.isDirectory()) {
-        result.push(...collectDirFiles(full).map((f) => relative(process.cwd(), f)));
-      } else if (CODE_EXT.test(p)) {
-        result.push(p);
-      }
-    }
-    return result;
+    if (full) return resolveFilePaths(paths);
+    try {
+      const diffFiles = exec(`git diff HEAD --name-only --diff-filter=ACMR -- ${paths.join(' ')}`)
+        .trim().split('\n').filter(Boolean).filter((f) => CODE_EXT.test(f));
+      if (diffFiles.length) return diffFiles;
+    } catch { /* fall through */ }
+    return resolveFilePaths(paths);
   }
   if (staged) {
     return exec('git diff --cached --name-only --diff-filter=ACMR')

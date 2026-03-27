@@ -70,6 +70,7 @@ export async function run(args) {
   await initProxy(env.proxy);
 
   const dryRun = args.includes('--dry-run');
+  const full = args.includes('--full');
   const noReport = args.includes('--no-report');
   const jsonOutput = args.includes('--json');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
@@ -77,10 +78,11 @@ export async function run(args) {
   const staged = args.includes('--staged');
 
   let diffLabel = 'staged changes';
-  if (file) diffLabel = file;
+  if (file && full) diffLabel = `${file} (full)`;
+  else if (file) diffLabel = file;
   else if (branch) diffLabel = `branch vs ${branch}`;
 
-  let diff = getDiff({ file, branch, staged });
+  let diff = getDiff({ file, branch, staged, full });
   if (!diff.trim()) {
     if (jsonOutput) { process.stdout.write(JSON.stringify({ score: 100, red: 0, yellow: 0, green: 0, issues: [] })); }
     else { console.log(`✅ ${t('noChanges')}`); }
