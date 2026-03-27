@@ -4,8 +4,8 @@
   "description": "AI-powered code review & quality pipeline CLI. Review → Auto-fix → Re-review → Test → Report.",
   "type": "module",
   "bin": {
-    "ai-review-pipeline": "./bin/cli.mjs",
-    "ai-rp": "./bin/cli.mjs"
+    "ai-review-pipeline": "bin/cli.mjs",
+    "ai-rp": "bin/cli.mjs"
   },
   "files": [
     "bin",
@@ -34,9 +34,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/liufeng/ai-review-pipeline"
+    "url": "git+https://github.com/hyxnj666-creator/ai-review-pipeline.git"
   },
-  "homepage": "https://github.com/liufeng/ai-review-pipeline#readme",
+  "homepage": "https://github.com/hyxnj666-creator/ai-review-pipeline#readme",
   "peerDependencies": {
     "https-proxy-agent": ">=6.0.0"
   },
