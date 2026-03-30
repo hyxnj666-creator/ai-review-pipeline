@@ -1,6 +1,6 @@
 # ai-review-pipeline
 
-AI 驱动的代码质量流水线 CLI —— Review → 自动修复 → 再审 → 测试 → 报告，一条命令搞定。
+AI 驱动的代码质量流水线 CLI —— Review → 测试 → 报告，一条命令搞定。加 `--fix` 启用自动修复循环。
 
 **[English](#english) | 中文**
 
@@ -10,7 +10,7 @@ AI 驱动的代码质量流水线 CLI —— Review → 自动修复 → 再审 
 
 - **零依赖** — 无 required dependencies，`npx` 秒级执行
 - **多 AI 模型** — OpenAI / DeepSeek / Claude / 通义千问 / Gemini / Ollama，自动识别
-- **三种模式** — `review`（只读）/ `fix`（自动修复循环）/ `--dry-run`（出报告不阻断）
+- **统一流水线** — 默认 Review + 测试 + 报告（只读），`--fix` 启用自动修复循环
 - **灵活目标** — 支持文件、文件夹、逗号分隔多目标
 - **`--full` 完整审查** — 无需 git 改动，直接对完整文件做质量审查
 - **HTML 可视化报告** — 评分 + 问题列表 + 修复建议，可附到 PR
@@ -42,11 +42,11 @@ echo 'GEMINI_API_KEY=xxx' >> .env.local
 # 本地 Ollama（无需 Key，启动 ollama serve 即可）
 echo 'AI_REVIEW_PROVIDER=ollama' >> .env.local
 
-# 2. Review 代码（不安装，直接跑）
-npx ai-review-pipeline review
+# 2. 默认流水线（Review + 测试 + 报告，不修改代码）
+npx ai-review-pipeline
 
-# 3. 完整流水线（Review → 修复 → 再审 → 测试 → 提交）
-npx ai-review-pipeline fix
+# 3. 自动修复流水线（Review → 修复 → 再审 → 测试 → 报告 → 提交）
+npx ai-review-pipeline --fix
 ```
 
 ## 安装
@@ -59,138 +59,28 @@ npm install -D ai-review-pipeline
 npm install -g ai-review-pipeline
 
 # 方式三：不安装，npx 直接用
-npx ai-review-pipeline review
+npx ai-review-pipeline
 ```
 
 安装后可使用短名 `ai-rp` 替代 `ai-review-pipeline`。
 
 ---
 
-## 完整命令手册
+## 流程设计
 
-### 通用参数（所有命令均可使用）
+### 默认模式（Review + Test + Report）
 
-| 参数 | 说明 |
-|------|------|
-| `--file <path>` | 指定目标文件/文件夹/多目标（逗号分隔） |
-| `--full` | 配合 `--file` 使用，审查完整文件内容（无需 git 改动） |
-| `--dry-run` | 所有命令通用，出报告不阻断，不修改代码，exit 0 |
-| `--lang <zh\|en>` | 输出语言（默认中文） |
-| `--help` / `-h` | 显示帮助 |
-| `--version` / `-v` | 显示版本 |
-
-#### `--file` vs `--full` 区别
-
-```bash
-# 只 review 该文件的 git 改动部分（无改动则无输出）
-ai-rp review --file src/utils.ts
-
-# review 完整文件内容（不管有没有 git 改动，都会执行）
-ai-rp review --file src/utils.ts --full
-
-# 不带 --file：review 所有 staged / HEAD 的 git 变动
-ai-rp review
+```
+① AI Review（1 轮，只读不改码）
+       │
+② AI 测试用例生成（功能/对抗/边界）
+       │
+③ 生成 HTML 报告
+       │
+④ Exit（有 🔴 问题 → exit 1 阻断；无 🔴 → exit 0）
 ```
 
-#### `--dry-run` 行为
-
-| 命令 | 正常模式 | `--dry-run` 模式 |
-|------|---------|-----------------|
-| `review` | 有 🔴 问题 → exit 1 阻断 | 出报告 → exit 0 不阻断 |
-| `fix` | Review → 修复 → 再审 → 测试 → 提交 | Review → 测试 → 报告 → exit 0（不修改不提交） |
-| `test` | 生成测试用例 | 生成测试用例 → exit 0 |
-
----
-
-### `review` — AI Code Review（只读）
-
-对代码做质量审查，输出评分 + 问题列表 + 修复建议。不修改任何代码。
-
-#### 专属参数
-
-| 参数 | 说明 |
-|------|------|
-| `--staged` | 只 review git staged 改动 |
-| `--branch <base>` | 对比分支（如 `main`） |
-| `--json` | JSON 格式输出（CI/CD 用） |
-| `--no-report` | 不生成 HTML 报告 |
-
-#### 用法示例
-
-```bash
-# 默认：review 所有 staged / HEAD 改动
-ai-rp review
-
-# 指定文件（只看 git 改动）
-ai-rp review --file src/components/Button.vue
-
-# 指定文件（审查完整内容，不依赖 git 变动）
-ai-rp review --file src/components/Button.vue --full
-
-# 指定文件夹（审查所有代码文件）
-ai-rp review --file src/views --full
-
-# 多目标
-ai-rp review --file "src/a.ts,src/b.vue" --full
-
-# 对比分支
-ai-rp review --branch main
-
-# 只看 staged 改动
-ai-rp review --staged
-
-# JSON 输出（接 CI）
-ai-rp review --json
-
-# dry-run（有问题也不阻断）
-ai-rp review --file src/utils.ts --full --dry-run
-```
-
----
-
-### `fix` — 完整自动修复流水线
-
-Review → 自动修复 → 再 Review → 测试用例生成 → HTML 报告 → 自动提交。
-
-#### 专属参数
-
-| 参数 | 说明 |
-|------|------|
-| `--threshold <n>` | 质量阈值（默认 95，0-100） |
-| `--max-rounds <n>` | 最大修复轮次（默认 3） |
-| `--no-commit` | 修复后不自动 git commit |
-| `--no-test` | 跳过测试用例生成 |
-| `--skip <levels>` | 跳过指定级别的修复（如 `green,yellow`） |
-
-#### 用法示例
-
-```bash
-# 默认：完整流水线
-ai-rp fix
-
-# dry-run：出报告不修改不阻断
-ai-rp fix --dry-run
-
-# 指定文件 + 完整审查 + dry-run
-ai-rp fix --file src/views/Home.vue --full --dry-run
-
-# 自定义阈值和轮次
-ai-rp fix --threshold 90 --max-rounds 5
-
-# 修复后不自动提交
-ai-rp fix --no-commit
-
-# 跳过测试生成
-ai-rp fix --no-test
-
-# 只修 🔴 必修项（跳过 🟡🟢）
-ai-rp fix --skip green,yellow
-
-# 指定文件夹
-ai-rp fix --file src/utils --full
-```
-
-#### 流程图
+### `--fix` 模式（Review + Fix Loop + Test + Report）
 
 ```
 ① AI Review（评分 + 问题列表）
@@ -202,19 +92,81 @@ ai-rp fix --file src/utils --full
                         └→ ③ 再次 Review（最多 N 轮）
                                 │
                                 ├─ 达标 → ④
-                                └─ 到达上限 → ④
+                                └─ maxRounds 到了 → ④（照样出测试和报告）
 
-④ AI 测试用例生成（功能/对抗/边界）
+④ AI 测试用例生成
        │
 ⑤ 生成 HTML 报告
        │
-⑥ 自动 git commit
+⑥ 自动 git commit（仅通过时）
+       │
+⑦ Exit（通过 → exit 0；未通过 → exit 1 阻断）
 ```
 
-**`--dry-run` 模式：**
+---
 
-```
-① AI Review → ② 测试 → ③ 报告 → exit 0（不修改，不提交，不阻断）
+## 完整命令手册
+
+### 命令
+
+| 命令 | 说明 |
+|------|------|
+| `ai-rp` | 默认：Review + 测试 + 报告（只读） |
+| `ai-rp review` | 同上（别名） |
+| `ai-rp fix` | 等价 `ai-rp --fix`（Review + 修复循环 + 测试 + 报告） |
+| `ai-rp test` | 独立 AI 测试用例生成 |
+| `ai-rp init` | 初始化配置文件 |
+
+### 核心参数
+
+| 参数 | 说明 |
+|------|------|
+| `--fix` | 启用自动修复模式（循环 review+fix） |
+| `--file <path>` | 指定目标文件/文件夹/多目标（逗号分隔） |
+| `--full` | 配合 `--file` 使用，审查完整文件内容（无需 git 改动） |
+| `--lang <zh\|en>` | 输出语言（默认中文） |
+| `--help` / `-h` | 显示帮助 |
+| `--version` / `-v` | 显示版本 |
+
+### Review 参数
+
+| 参数 | 说明 |
+|------|------|
+| `--staged` | 只 review git staged 改动 |
+| `--branch <base>` | 对比分支（如 `main`） |
+| `--json` | JSON 格式输出（CI/CD 用） |
+| `--no-report` | 不生成 HTML 报告 |
+
+### Fix 参数
+
+| 参数 | 说明 |
+|------|------|
+| `--threshold <n>` | 质量阈值（默认 95，0-100） |
+| `--max-rounds <n>` | 最大修复轮次（默认 5） |
+| `--no-commit` | 修复后不自动 git commit |
+| `--no-test` | 跳过测试用例生成 |
+| `--skip <levels>` | 跳过修复级别（如 `green,yellow`） |
+
+### Exit Code
+
+| 场景 | Exit Code |
+|------|-----------|
+| Review 通过（无 red 且分数达标） | `0` |
+| Review 未通过（有 red 问题） | `1` |
+| `--fix` 通过 | `0` |
+| `--fix` maxRounds 用完仍未通过 | `1`（阻断 CI/Hook，但报告照出） |
+
+### `--file` vs `--full` 区别
+
+```bash
+# 只 review 该文件的 git 改动部分
+ai-rp --file src/utils.ts
+
+# review 完整文件内容（不管有没有 git 改动）
+ai-rp --file src/utils.ts --full
+
+# 不带 --file：review 所有 staged / HEAD 的 git 变动
+ai-rp
 ```
 
 ---
@@ -223,26 +175,14 @@ ai-rp fix --file src/utils --full
 
 为指定文件生成三类测试用例。
 
-#### 专属参数
-
 | 参数 | 说明 |
 |------|------|
+| `--file <path>` | 指定文件 |
 | `--staged` | 为 staged 文件生成测试 |
 
-#### 用法示例
-
 ```bash
-# 指定文件
 ai-rp test --file src/utils.ts
-
-# 指定文件夹
-ai-rp test --file src/composables
-
-# staged 文件
 ai-rp test --staged
-
-# dry-run
-ai-rp test --file src/api.ts --dry-run
 ```
 
 #### 生成三类用例
@@ -309,7 +249,7 @@ ollama pull qwen2.5-coder
 echo 'AI_REVIEW_PROVIDER=ollama' >> .env.local
 
 # 4. 使用
-npx ai-review-pipeline review --file src/utils.ts --full
+npx ai-review-pipeline --file src/utils.ts --full
 ```
 
 ---
@@ -322,7 +262,7 @@ npx ai-review-pipeline review --file src/utils.ts --full
 {
   "review": {
     "threshold": 95,           // 质量阈值（0-100）
-    "maxRounds": 3,            // fix 模式最大修复轮数
+    "maxRounds": 5,            // --fix 模式最大修复轮数
     "model": "",               // 指定模型（默认 gpt-4o-mini）
     "maxDiffLines": 1500,      // diff 超过此行数自动截断
     "customRules": [           // 项目自定义审查规则
@@ -375,7 +315,7 @@ npx ai-review-pipeline review --file src/utils.ts --full
 
 ```yaml
 - name: AI Code Review
-  run: npx ai-review-pipeline review --json
+  run: npx ai-review-pipeline --json
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
@@ -385,10 +325,20 @@ npx ai-review-pipeline review --file src/utils.ts --full
 ```yaml
 ai-review:
   script:
-    - npx ai-review-pipeline review --json
+    - npx ai-review-pipeline --json
   variables:
     OPENAI_API_KEY: $OPENAI_API_KEY
   allow_failure: false
+```
+
+### Git Hook（lefthook）
+
+```yaml
+# lefthook.yml
+pre-push:
+  commands:
+    ai-review:
+      run: npx ai-rp --fix --max-rounds 3
 ```
 
 ## 在 package.json 中配置 scripts
@@ -396,10 +346,10 @@ ai-review:
 ```json
 {
   "scripts": {
-    "review": "ai-rp review",
-    "review:full": "ai-rp review --full",
-    "review:fix": "ai-rp fix",
-    "review:dry": "ai-rp fix --dry-run",
+    "review": "ai-rp",
+    "review:full": "ai-rp --file src/ --full",
+    "review:fix": "ai-rp --fix",
+    "review:fix:full": "ai-rp --fix --file src/ --full",
     "test:ai": "ai-rp test --staged"
   }
 }
@@ -408,26 +358,27 @@ ai-review:
 ## 常用命令速查
 
 ```bash
-# ── Review ──
-ai-rp review                                        # review git 变动
-ai-rp review --file src/a.vue --full                # review 完整文件
-ai-rp review --file src/views --full --dry-run      # review 文件夹，不阻断
-ai-rp review --branch main                          # 对比分支
-ai-rp review --staged --json                        # CI 模式
+# ── 默认模式（Review + 测试 + 报告，只读） ──
+ai-rp                                          # review git 变动
+ai-rp --file src/a.vue                         # 指定文件
+ai-rp --file src/a.vue --full                  # review 完整文件
+ai-rp --file src/views --full                  # review 整个文件夹
+ai-rp --branch main                            # 对比分支
+ai-rp --staged --json                          # CI 模式
 
-# ── Fix 流水线 ──
-ai-rp fix                                           # 完整流水线
-ai-rp fix --dry-run                                 # 出报告不修改
-ai-rp fix --file src/a.vue --full --dry-run         # 完整审查 + 报告
-ai-rp fix --threshold 90 --max-rounds 5             # 自定义参数
-ai-rp fix --no-commit --skip green                  # 不提交，只修红黄
+# ── 修复模式（Review + 自动修复 + 测试 + 报告） ──
+ai-rp --fix                                    # 完整修复流水线
+ai-rp fix                                      # 同上（命令别名）
+ai-rp --fix --file src/a.vue --full            # 修复指定文件
+ai-rp fix --threshold 90 --max-rounds 3        # 自定义参数
+ai-rp fix --no-commit --skip green             # 不提交，只修红黄
 
-# ── Test ──
-ai-rp test --file src/utils.ts                      # 生成测试
-ai-rp test --staged                                 # staged 文件测试
+# ── 独立测试 ──
+ai-rp test --file src/utils.ts                 # 生成测试
+ai-rp test --staged                            # staged 文件测试
 
-# ── Init ──
-ai-rp init                                          # 生成配置文件
+# ── 初始化 ──
+ai-rp init                                     # 生成配置文件
 ```
 
 ---
@@ -438,7 +389,7 @@ ai-rp init                                          # 生成配置文件
 
 ### What is this?
 
-An AI-powered code quality CLI tool. One command to review, auto-fix, test, and report. Supports **OpenAI, DeepSeek, Claude, Qwen, Gemini, Ollama** and any OpenAI-compatible API.
+An AI-powered code quality CLI tool. Default: Review + Test + Report in one command. Add `--fix` for auto-fix loop. Supports **OpenAI, DeepSeek, Claude, Qwen, Gemini, Ollama** and any OpenAI-compatible API.
 
 ### Quick Start
 
@@ -449,11 +400,39 @@ echo 'DEEPSEEK_API_KEY=sk-xxx' >> .env.local       # DeepSeek (cheap & good)
 echo 'ANTHROPIC_API_KEY=sk-ant-xxx' >> .env.local   # Claude
 echo 'AI_REVIEW_PROVIDER=ollama' >> .env.local      # Local Ollama (no key)
 
-npx ai-review-pipeline review                          # Review code
-npx ai-review-pipeline fix                             # Full pipeline
-npx ai-review-pipeline fix --dry-run                   # Report only, no changes
-npx ai-review-pipeline review --file src/a.vue --full  # Review full file
+npx ai-review-pipeline                                # Review + Test + Report
+npx ai-review-pipeline --fix                          # Auto-fix pipeline
+npx ai-review-pipeline --file src/a.vue --full        # Review full file
 ```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `ai-rp` | Default: Review + Test + Report (read-only) |
+| `ai-rp review` | Same as default (alias) |
+| `ai-rp --fix` / `ai-rp fix` | Review + Auto-fix loop + Test + Report |
+| `ai-rp test --file <path>` | Standalone test case generation |
+| `ai-rp init` | Create `.ai-pipeline.json` config |
+
+### Core Options
+
+| Option | Description |
+|--------|-------------|
+| `--fix` | Enable auto-fix mode (review+fix loop) |
+| `--file <path>` | Target file/folder/multi-path (comma-separated) |
+| `--full` | Review full file content, use with `--file` |
+| `--json` | JSON output for CI |
+| `--lang <zh\|en>` | Output language (default: zh) |
+
+### Exit Codes
+
+| Scenario | Code |
+|----------|------|
+| Review passed (no red issues) | `0` |
+| Review failed (red issues found) | `1` |
+| `--fix` passed | `0` |
+| `--fix` maxRounds exhausted, still failing | `1` (blocks CI, but report is still generated) |
 
 ### Supported Providers
 
@@ -467,32 +446,12 @@ npx ai-review-pipeline review --file src/a.vue --full  # Review full file
 | Ollama | `qwen2.5-coder` | No key needed |
 | Custom | — | `AI_REVIEW_API_KEY` + `AI_REVIEW_BASE_URL` |
 
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `ai-rp review` | AI Code Review (read-only) |
-| `ai-rp review --full` | Review full file content (no git changes needed) |
-| `ai-rp fix` | Review → Auto-fix → Re-review → Test → Commit |
-| `ai-rp fix --dry-run` | Full pipeline → report only, no blocking |
-| `ai-rp test --file <path>` | Generate test cases |
-| `ai-rp init` | Create `.ai-pipeline.json` config |
-
-### Global Options
-
-| Option | Description |
-|--------|-------------|
-| `--file <path>` | Target file/folder/multi-path (comma-separated) |
-| `--full` | Review full file content, use with `--file` |
-| `--dry-run` | Report only, no changes, no blocking (all commands) |
-| `--lang <zh\|en>` | Output language (default: zh) |
-
 ### Install
 
 ```bash
 npm install -D ai-review-pipeline   # Project-level
 npm install -g ai-review-pipeline   # Global
-npx ai-review-pipeline review       # No install needed
+npx ai-review-pipeline              # No install needed
 ```
 
 Use `--lang en` for English output.

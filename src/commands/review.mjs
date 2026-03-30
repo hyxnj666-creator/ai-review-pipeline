@@ -1,11 +1,10 @@
-import { loadEnv } from '../core/env.mjs';
-import { loadConfig, getEnvConfig } from '../core/config.mjs';
-import { initProxy, callAI } from '../core/ai-client.mjs';
-import { getDiff } from '../core/diff.mjs';
-import { writeReport } from '../core/report.mjs';
-import { log, separator, t } from '../core/logger.mjs';
+/**
+ * Review utilities — shared by pipeline.mjs and test.mjs
+ * buildPrompt: constructs the AI review prompt from diff + custom rules
+ * parseReview: extracts structured review data from AI response
+ */
 
-function buildPrompt(diff, customRules) {
+export function buildPrompt(diff, customRules) {
   const rulesStr = customRules.length
     ? '\n## 项目自定义规则（必须检查）\n' + customRules.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
@@ -50,7 +49,7 @@ ${diff}
 \`\`\``;
 }
 
-function parseReview(content) {
+export function parseReview(content) {
   const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
   let result = { score: 100, red: 0, yellow: 0, green: 0, summary: '', issues: [] };
   if (jsonMatch) {
@@ -58,95 +57,3 @@ function parseReview(content) {
   }
   return { markdown: content, ...result };
 }
-
-export async function run(args) {
-  loadEnv();
-  const config = loadConfig();
-  const env = getEnvConfig();
-  const model = config.review.model || env.model;
-
-  if (!env.apiKey) { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
-
-  await initProxy(env.proxy);
-
-  const dryRun = args.includes('--dry-run');
-  const full = args.includes('--full');
-  const noReport = args.includes('--no-report');
-  const jsonOutput = args.includes('--json');
-  const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
-  const branch = args.includes('--branch') ? args[args.indexOf('--branch') + 1] : null;
-  const staged = args.includes('--staged');
-
-  let diffLabel = 'staged changes';
-  if (file && full) diffLabel = `${file} (full)`;
-  else if (file) diffLabel = file;
-  else if (branch) diffLabel = `branch vs ${branch}`;
-
-  let diff = getDiff({ file, branch, staged, full });
-  if (!diff.trim()) {
-    if (jsonOutput) { process.stdout.write(JSON.stringify({ score: 100, red: 0, yellow: 0, green: 0, issues: [] })); }
-    else { console.log(`✅ ${t('noChanges')}`); }
-    process.exit(0);
-  }
-
-  const totalLines = diff.split('\n').length;
-  let truncated = false;
-  if (totalLines > config.review.maxDiffLines) {
-    diff = diff.split('\n').slice(0, config.review.maxDiffLines).join('\n') + '\n... (truncated)';
-    truncated = true;
-  }
-
-  if (!jsonOutput) {
-    console.log(`📝 ${t('diffLines', totalLines, diffLabel, truncated)}`);
-    console.log(`⚙️  ${t('provider', env.provider)} | ${t('model', model)} | ${t('threshold', config.review.threshold)}`);
-  }
-
-  const t0 = Date.now();
-  const prompt = buildPrompt(diff, config.review.customRules || []);
-  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, provider: env.provider });
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-
-  const review = parseReview(content);
-
-  const meta = {
-    date: new Date().toLocaleString(),
-    model,
-    diffLabel,
-    totalLines,
-    truncated,
-    threshold: config.review.threshold,
-    elapsed,
-    tokens,
-    mode: dryRun ? 'review (dry-run)' : 'review',
-  };
-
-  if (jsonOutput) {
-    process.stdout.write(JSON.stringify({ ...review, meta }, null, 2));
-    process.exit(dryRun ? 0 : (review.red > 0 ? 1 : 0));
-  }
-
-  separator(t('reviewTitle'));
-  console.log(content);
-  console.log();
-  console.log('─'.repeat(60));
-  log('📊', t('score', review.score, review.red, review.yellow, review.green));
-  log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${tokens ? ` | ${t('tokens', tokens.prompt_tokens, tokens.completion_tokens, tokens.total_tokens)}` : ''}`);
-  log(review.score >= config.review.threshold && review.red === 0 ? '✅' : '❌',
-    t('reviewResult', review.score >= config.review.threshold && review.red === 0));
-  console.log('═'.repeat(60));
-
-  if (!noReport) {
-    const reportPath = writeReport({ review, meta, outputDir: config.report.outputDir, open: config.report.open });
-    log('📄', t('reportGenerated', reportPath));
-  }
-
-  if (dryRun) {
-    log('✅', t('resultDryRun'));
-    log('💡', t('dryRunDone'));
-    process.exit(0);
-  }
-
-  if (review.red > 0) process.exit(1);
-}
-
-export { buildPrompt, parseReview };

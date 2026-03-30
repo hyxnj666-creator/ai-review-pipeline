@@ -22,41 +22,38 @@ if (args.includes('--version') || args.includes('-v')) {
   process.exit(0);
 }
 
-if (args.includes('--help') || args.includes('-h') || !command) {
+if (args.includes('--help') || args.includes('-h')) {
   console.log(`\nai-review-pipeline v${pkg.version}\n`);
   console.log(t('helpText'));
   console.log();
   process.exit(0);
 }
 
-const subArgs = args.slice(1);
+const isFlag = !command || command.startsWith('-');
 
 try {
-  switch (command) {
-    case 'review': {
-      const { run } = await import('../src/commands/review.mjs');
-      await run(subArgs);
-      break;
-    }
-    case 'fix': {
-      const { run } = await import('../src/commands/fix.mjs');
-      await run(subArgs);
-      break;
-    }
-    case 'test': {
-      const { run } = await import('../src/commands/test.mjs');
-      await run(subArgs);
-      break;
-    }
-    case 'init': {
-      const { run } = await import('../src/commands/init.mjs');
-      await run();
-      break;
-    }
-    default:
-      console.error(`❌ Unknown command: ${command}`);
-      console.log(`Run "ai-rp --help" for usage.`);
-      process.exit(1);
+  if (isFlag) {
+    // No subcommand (e.g. `ai-rp --file src/a.vue` or `ai-rp --fix`)
+    const { run } = await import('../src/commands/pipeline.mjs');
+    await run(args);
+  } else if (command === 'review') {
+    const { run } = await import('../src/commands/pipeline.mjs');
+    await run(args.slice(1));
+  } else if (command === 'fix') {
+    const subArgs = args.slice(1);
+    if (!subArgs.includes('--fix')) subArgs.unshift('--fix');
+    const { run } = await import('../src/commands/pipeline.mjs');
+    await run(subArgs);
+  } else if (command === 'test') {
+    const { run } = await import('../src/commands/test.mjs');
+    await run(args.slice(1));
+  } else if (command === 'init') {
+    const { run } = await import('../src/commands/init.mjs');
+    await run();
+  } else {
+    console.error(`❌ Unknown command: ${command}`);
+    console.log(`Run "ai-rp --help" for usage.`);
+    process.exit(1);
   }
 } catch (e) {
   console.error(`❌ ${e.message}`);

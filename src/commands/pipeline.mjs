@@ -9,7 +9,7 @@ import { writeReport } from '../core/report.mjs';
 import { log, separator, t } from '../core/logger.mjs';
 import { buildPrompt, parseReview } from './review.mjs';
 
-// ─── Auto Fix ───
+// ─── Auto Fix (single file) ───
 async function fixFile({ filePath, issues, env, model, safetyMinRatio }) {
   const fullPath = resolve(process.cwd(), filePath);
   if (!existsSync(fullPath)) return false;
@@ -50,6 +50,7 @@ ${source}
   return true;
 }
 
+// ─── Auto Fix (batch) ───
 async function autoFix({ issues, skipLevels, env, model, safetyMinRatio }) {
   const fileMap = new Map();
   for (const issue of issues) {
@@ -71,7 +72,7 @@ async function autoFix({ issues, skipLevels, env, model, safetyMinRatio }) {
   return fixed;
 }
 
-// ─── Test generation (embedded) ───
+// ─── Test generation ───
 async function generateTests({ files, env, model, config }) {
   const codeFiles = files.filter((f) => existsSync(resolve(process.cwd(), f)));
   if (codeFiles.length === 0) return '';
@@ -107,7 +108,7 @@ ${sourceSnippets}`;
   return content;
 }
 
-// ─── Main pipeline ───
+// ─── Unified Pipeline ───
 export async function run(args) {
   loadEnv();
   const config = loadConfig();
@@ -118,11 +119,16 @@ export async function run(args) {
 
   await initProxy(env.proxy);
 
-  const dryRun = args.includes('--dry-run');
+  // ── Parse args ──
+  const fixMode = args.includes('--fix');
   const full = args.includes('--full');
   const noCommit = args.includes('--no-commit');
   const noTest = args.includes('--no-test');
+  const noReport = args.includes('--no-report');
+  const jsonOutput = args.includes('--json');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
+  const branch = args.includes('--branch') ? args[args.indexOf('--branch') + 1] : null;
+  const staged = args.includes('--staged');
   const maxRounds = Number(args.includes('--max-rounds') ? args[args.indexOf('--max-rounds') + 1] : 0) || config.review.maxRounds;
   const threshold = Number(args.includes('--threshold') ? args[args.indexOf('--threshold') + 1] : 0) || config.review.threshold;
   const skipLevels = new Set(
@@ -130,68 +136,84 @@ export async function run(args) {
       .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   );
 
-  separator(`🚀 ${t('pipelineTitle')}`);
-  const modeLabel = dryRun ? t('modeDryRun') : t('modeFix');
-  log('⚙️', t('mode', modeLabel));
-  if (file) log('📂', t('target', full ? `${file} (full)` : file));
-  log('⚙️', `${t('provider', env.provider)} | ${t('model', model)} | ${t('threshold', threshold)} | ${t('maxRounds', dryRun ? 1 : maxRounds)}`);
-  if (!dryRun) {
-    log('⚙️', `${t('autoCommit', !noCommit)} | ${t('autoTest', !noTest)}`);
+  const modeLabel = fixMode ? t('modeFix') : t('modeReview');
+
+  if (!jsonOutput) {
+    separator(`🚀 ${t('pipelineTitle')}`);
+    log('⚙️', t('mode', modeLabel));
+    if (file) log('📂', t('target', full ? `${file} (full)` : file));
+    log('⚙️', `${t('provider', env.provider)} | ${t('model', model)} | ${t('threshold', threshold)}${fixMode ? ` | ${t('maxRounds', maxRounds)}` : ''}`);
+    if (fixMode) {
+      log('⚙️', `${t('autoCommit', !noCommit)} | ${t('autoTest', !noTest)}`);
+    }
   }
 
+  // ── Phase 1: Review (+ Fix loop if --fix) ──
   let round = 0;
-  let lastReview = { score: 0, red: 0, yellow: 0, green: 0, summary: '', issues: [] };
+  let lastReview = { score: 0, red: 0, yellow: 0, green: 0, summary: '', issues: [], markdown: '' };
   let passed = false;
-  const effectiveMaxRounds = dryRun ? 1 : maxRounds;
+  let reviewTokens = null;
+  const effectiveMaxRounds = fixMode ? maxRounds : 1;
 
   while (round < effectiveMaxRounds) {
     round++;
-    separator(`📝 ${t('roundTitle', round)}`);
 
-    const diff = getDiff({ file, full });
+    if (!jsonOutput) separator(`📝 ${t('roundTitle', round)}`);
+
+    const diff = getDiff({ file, branch, staged, full });
     if (!diff.trim()) {
-      log('✅', t('noChanges'));
+      if (!jsonOutput) log('✅', t('noChanges'));
       passed = true;
       break;
     }
 
-    const truncated = diff.split('\n').length > config.review.maxDiffLines
+    const totalLines = diff.split('\n').length;
+    const truncated = totalLines > config.review.maxDiffLines
       ? diff.split('\n').slice(0, config.review.maxDiffLines).join('\n') + '\n... (truncated)'
       : diff;
 
-    log('📏', `${diff.split('\n').length} lines`);
+    if (!jsonOutput) log('📏', `${totalLines} lines`);
+
+    const t0 = Date.now();
     const prompt = buildPrompt(truncated, config.review.customRules || []);
     const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, provider: env.provider });
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    reviewTokens = tokens;
+
     lastReview = parseReview(content);
 
-    console.log('\n' + lastReview.markdown + '\n');
-    log('📊', t('score', lastReview.score, lastReview.red, lastReview.yellow, lastReview.green));
-    log('💬', lastReview.summary);
+    if (!jsonOutput) {
+      console.log('\n' + lastReview.markdown + '\n');
+      log('📊', t('score', lastReview.score, lastReview.red, lastReview.yellow, lastReview.green));
+      log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${tokens ? ` | ${t('tokens', tokens.prompt_tokens, tokens.completion_tokens, tokens.total_tokens)}` : ''}`);
+      log('💬', lastReview.summary);
+    }
 
     const effectiveRed = skipLevels.has('red') ? 0 : lastReview.red;
     if (lastReview.score >= threshold && effectiveRed === 0) {
-      log('🎉', t('passed', lastReview.score, threshold));
+      if (!jsonOutput) log('🎉', t('passed', lastReview.score, threshold));
       passed = true;
       break;
     }
 
-    if (dryRun) {
-      log('📊', t('dryRunSkip'));
-      break;
-    }
+    // Default mode: 1 round review only, no fix
+    if (!fixMode) break;
 
+    // Fix mode: last round — only review, don't fix
     if (round >= maxRounds) {
-      log('⚠️', t('maxRoundsReached', maxRounds));
+      if (!jsonOutput) log('⚠️', t('maxRoundsReached', maxRounds));
       break;
     }
 
     // ── Auto Fix ──
-    separator(`🔧 ${t('fixRound', round)}`);
-    log('⚠️', t('fixSafetyNote'));
+    if (!jsonOutput) {
+      separator(`🔧 ${t('fixRound', round)}`);
+      log('⚠️', t('fixSafetyNote'));
+    }
 
     const fixableIssues = lastReview.issues.filter((i) => i.severity !== 'green');
     if (fixableIssues.length === 0) {
-      log('✅', t('noFixNeeded'));
+      if (!jsonOutput) log('✅', t('noFixNeeded'));
       passed = true;
       break;
     }
@@ -203,53 +225,72 @@ export async function run(args) {
       model,
       safetyMinRatio: config.fix.safetyMinRatio,
     });
-    log('📦', t('fixCount', fixedCount));
 
-    if (fixedCount > 0) {
-      separator(`📋 ${t('fixDiffTitle')}`);
-      try {
-        console.log(execSync('git diff --stat', { encoding: 'utf-8' }));
-        const detail = execSync('git diff --no-color', { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 });
-        const lines = detail.split('\n');
-        if (lines.length > 100) {
-          console.log(lines.slice(0, 100).join('\n'));
-          console.log(`\n... ${lines.length} lines total. Use git diff for full output.`);
-        } else {
-          console.log(detail);
-        }
-      } catch { /* skip */ }
+    if (!jsonOutput) {
+      log('📦', t('fixCount', fixedCount));
+
+      if (fixedCount > 0) {
+        separator(`📋 ${t('fixDiffTitle')}`);
+        try {
+          console.log(execSync('git diff --stat', { encoding: 'utf-8' }));
+          const detail = execSync('git diff --no-color', { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 });
+          const lines = detail.split('\n');
+          if (lines.length > 100) {
+            console.log(lines.slice(0, 100).join('\n'));
+            console.log(`\n... ${lines.length} lines total. Use git diff for full output.`);
+          } else {
+            console.log(detail);
+          }
+        } catch { /* skip */ }
+      }
+
+      log('🔄', t('nextRound'));
     }
-
-    log('🔄', t('nextRound'));
   }
 
-  // ── HTML Report ──
-  const meta = {
-    date: new Date().toLocaleString(),
-    model,
-    mode: dryRun ? 'dry-run' : 'fix',
-    extra: `Rounds: ${round}`,
-    threshold,
-  };
-  const reportPath = writeReport({ review: lastReview, meta, outputDir: config.report.outputDir, open: config.report.open });
-  log('📄', t('reportGenerated', reportPath));
+  // ── JSON output mode: output and exit ──
+  if (jsonOutput) {
+    const result = {
+      ...lastReview,
+      passed,
+      rounds: round,
+      mode: fixMode ? 'fix' : 'review',
+      meta: { model, threshold, tokens: reviewTokens },
+    };
+    process.stdout.write(JSON.stringify(result, null, 2));
+    process.exit(passed ? 0 : 1);
+  }
 
-  // ── Test generation (dry-run always, fix only if passed) ──
-  const shouldGenTests = dryRun ? !noTest : (passed && !noTest);
-  if (shouldGenTests) {
+  // ── Phase 2: Test (always, unless --no-test) ──
+  let testResult = '';
+  if (!noTest) {
     separator(`🧪 ${t('testTitle')}`);
-    const files = getChangedFiles({ file, full });
+    const files = getChangedFiles({ file, staged, full });
     if (files.length > 0) {
       log('📂', t('testTarget', files.join(', ')));
-      const testResult = await generateTests({ files, env, model, config });
+      testResult = await generateTests({ files, env, model, config });
       console.log('\n' + testResult);
     } else {
       log('ℹ️', t('testNoFiles'));
     }
   }
 
-  // ── Auto commit (fix mode + passed + not dry-run) ──
-  if (passed && !noCommit && !dryRun) {
+  // ── Phase 3: Report (always, unless --no-report) ──
+  let reportPath = '';
+  if (!noReport) {
+    const meta = {
+      date: new Date().toLocaleString(),
+      model,
+      mode: fixMode ? 'fix' : 'review',
+      extra: fixMode ? `Rounds: ${round}/${maxRounds}${passed ? ' ✅' : ' ⚠️'}` : '',
+      threshold,
+    };
+    reportPath = writeReport({ review: lastReview, meta, outputDir: config.report.outputDir, open: config.report.open });
+    log('📄', t('reportGenerated', reportPath));
+  }
+
+  // ── Phase 4: Auto Commit (fix mode + passed only) ──
+  if (fixMode && passed && !noCommit) {
     separator(`📦 ${t('commitTitle')}`);
     try {
       execSync('git add -A', { encoding: 'utf-8' });
@@ -261,22 +302,20 @@ export async function run(args) {
     }
   }
 
-  // ── Final report ──
+  // ── Final Summary ──
   separator('📋 Pipeline Report');
-  const modeReport = dryRun ? 'Dry-run' : 'Fix';
-  log(passed || dryRun ? '✅' : '❌',
-    `${dryRun ? t('resultDryRun') : passed ? t('resultPass') : t('resultFail')}`);
+  log(passed ? '✅' : '❌', passed ? t('resultPass') : t('resultFail'));
   log('📊', t('finalScore', lastReview.score));
-  log('🔄', t('finalRounds', round));
-  log('👁️', t('mode', modeReport));
-  log('📄', t('finalReport', reportPath));
+  if (fixMode) log('🔄', t('finalRounds', round));
+  log('👁️', t('mode', fixMode ? 'Fix' : 'Review'));
+  if (reportPath) log('📄', t('finalReport', reportPath));
 
-  if (dryRun) {
-    log('💡', t('dryRunDone'));
+  if (!fixMode && !passed) {
     log('💡', t('fixSuggest'));
-  } else if (!passed) {
+  } else if (fixMode && !passed) {
     log('💡', t('manualSuggest'));
   }
 
-  if (!passed && !dryRun) process.exit(1);
+  // Exit: not passed → exit(1)
+  if (!passed) process.exit(1);
 }

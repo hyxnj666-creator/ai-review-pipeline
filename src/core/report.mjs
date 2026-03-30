@@ -75,7 +75,7 @@ export function writeReport({ review, meta, outputDir, open }) {
   const outDir = resolve(process.cwd(), outputDir);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const prefix = meta.mode === 'fix' ? 'pipeline' : 'review';
+  const prefix = meta.mode === 'fix' ? 'fix' : 'review';
   const reportPath = resolve(outDir, `${prefix}-${ts}.html`);
   writeFileSync(reportPath, generateHTML(review, meta), 'utf-8');
 

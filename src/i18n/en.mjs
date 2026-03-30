@@ -8,16 +8,12 @@ export default {
   maxRounds: (n) => `Max rounds: ${n}`,
   mode: (m) => `Mode: ${m}`,
   target: (t) => `Target: ${t}`,
-  modeReviewOnly: 'Review-only (read-only)',
-  modeFix: 'Review + Auto-fix',
-  modeDryRun: 'Dry-run (report only, no changes, no blocking)',
+  modeReview: 'Review (read-only audit + test + report)',
+  modeFix: 'Review + Auto-fix + Test + Report',
   roundTitle: (n) => `Round ${n} Code Review`,
   score: (s, r, y, g) => `Score: ${s}/100 | 🔴${r} 🟡${y} 🟢${g}`,
   passed: (s, t) => `Quality passed (${s} >= ${t}). Review passed!`,
-  reviewOnlyHint: 'Review-only mode: issues above require manual fix.',
-  fixHint: 'To auto-fix, use the fix command.',
-  dryRunSkip: 'Dry-run mode: skipping fix, generating tests and report.',
-  maxRoundsReached: (n) => `Reached max rounds ${n}, stopping auto-fix.`,
+  maxRoundsReached: (n) => `Reached max rounds ${n}, exiting fix loop.`,
   fixRound: (n) => `Round ${n} Auto-fix`,
   fixSafetyNote: 'Auto-fix only addresses code quality issues, not business logic.',
   fixFile: (f, n) => `Fixing ${f} (${n} issues)...`,
@@ -36,15 +32,12 @@ export default {
   commitDone: (m) => `Committed: ${m}`,
   commitFail: (e) => `Commit failed: ${e}`,
   pipelineTitle: 'AI Quality Pipeline',
-  resultPass: 'Passed',
-  resultFail: 'Failed',
-  resultDryRun: 'Report generated (dry-run, no blocking)',
+  resultPass: '✅ Passed',
+  resultFail: '❌ Failed',
   finalScore: (s) => `Final score: ${s}/100`,
   finalRounds: (n) => `Rounds: ${n}`,
   finalReport: (p) => `Report: ${p}`,
-  dryRunDone: 'Dry-run complete, no code was modified.',
-  fixSuggest: 'To auto-fix, run: ai-rp fix',
-  reviewOnlySuggest: 'Review-only mode. To auto-fix, run: ai-rp fix',
+  fixSuggest: 'To auto-fix, run: ai-rp --fix or ai-rp fix',
   manualSuggest: 'Suggestion: manually fix remaining issues and re-run, or increase --max-rounds',
   autoCommit: (v) => `Auto commit: ${v ? 'yes' : 'no'}`,
   autoTest: (v) => `Generate tests: ${v ? 'yes' : 'no'}`,
@@ -61,35 +54,43 @@ export default {
   helpText: `
 ai-review-pipeline — AI-powered code quality pipeline
 
-Commands:
-  review    AI Code Review (read-only, no code changes)
-  fix       Review + auto-fix + test + commit pipeline
-  test      AI test case generation
-  init      Initialize config file (.ai-pipeline.json)
+Default: Review (1 round) → Test generation → Report
+--fix:   Review → Auto-fix → Loop until pass or maxRounds → Test → Report
 
-Global options:
+Commands:
+  (default)   Review + Test + Report (read-only, no code changes)
+  review      Same as default (alias)
+  fix         Equivalent to --fix (Review + Auto-fix + Test + Report)
+  test        Standalone AI test case generation
+  init        Initialize config file (.ai-pipeline.json)
+
+Core options:
+  --fix               Enable auto-fix mode (review+fix loop)
   --file <path>       Target file/folder/multi-path (comma-separated)
   --full              Review full file content (ignores git diff), use with --file
-  --dry-run           Report only, no changes, no blocking (works on all commands)
   --lang <zh|en>      Output language (default: zh)
   --help              Show help
   --version           Show version
 
-review options:
+Review options:
   --staged            Review staged changes
   --branch <base>     Compare branch (e.g. main)
   --json              JSON output (for CI)
   --no-report         Skip HTML report
 
-fix options:
+Fix options:
   --threshold <n>     Quality threshold (default: 95)
-  --max-rounds <n>    Max fix rounds (default: 3)
+  --max-rounds <n>    Max fix rounds (default: 5)
   --no-commit         Don't auto-commit after fix
   --no-test           Skip test case generation
   --skip <levels>     Skip fix levels (e.g. green,yellow)
 
 test options:
   --staged            Generate tests for staged files
+
+Exit codes:
+  0   Review passed (no red issues and score meets threshold)
+  1   Review failed (red issues found, or --fix didn't resolve all issues)
 
 --file vs --full:
   --file src/a.vue          Review only git changes for that file
@@ -108,12 +109,13 @@ Supported AI Providers:
   Override: AI_REVIEW_PROVIDER=deepseek
 
 Examples:
-  npx ai-rp review --file src/utils.ts              # git changes only
-  npx ai-rp review --file src/utils.ts --full       # review full file
-  npx ai-rp review --dry-run --file src/ --full     # review entire folder
-  npx ai-rp fix --dry-run --file src/views --full   # full review + report
-  npx ai-rp fix --threshold 90
-  npx ai-rp test --file src/utils.ts
-  npx ai-rp init
+  npx ai-rp                                    # default: review + test + report
+  npx ai-rp --file src/utils.ts                # target file
+  npx ai-rp --file src/utils.ts --full         # review full file
+  npx ai-rp --fix                              # auto-fix mode
+  npx ai-rp --fix --file src/views --full      # fix entire folder
+  npx ai-rp fix --threshold 90 --max-rounds 3  # fix command + custom params
+  npx ai-rp test --file src/utils.ts           # standalone test generation
+  npx ai-rp init                               # init config
 `.trim(),
 };

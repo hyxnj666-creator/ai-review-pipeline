@@ -12,8 +12,6 @@ const DEFAULTS = {
     skip: [],
   },
   fix: {
-    enabled: false,
-    requireConfirm: true,
     safetyMinRatio: 0.5,
   },
   test: {
