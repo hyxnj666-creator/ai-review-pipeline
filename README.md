@@ -289,9 +289,9 @@ npx ai-review-pipeline --file src/utils.ts --full
 
 | 级别 | 含义 | 扣分 |
 |------|------|------|
-| 🔴 必修 | 逻辑错误、安全漏洞、数据风险 | -20/个 |
-| 🟡 建议 | 边界未处理、类型问题、错误处理缺失 | -5/个 |
-| 🟢 优化 | 代码重复、命名不清、性能隐患 | -1/个 |
+| 🔴 必修 | 逻辑错误、安全漏洞、数据风险、未捕获的异步错误、资源泄漏/死循环 | -20/个 |
+| 🟡 建议 | 边界未处理、类型问题、错误处理缺失（仅影响体验；涉及数据/安全则升 🔴） | -5/个 |
+| 🟢 优化 | 代码重复、命名不清、性能隐患、魔法数字/硬编码、注释缺失、风格不一致 | -1/个 |
 
 ## 环境变量
 
@@ -429,7 +429,13 @@ npx ai-review-pipeline --file src/a.vue --full        # Review full file
 
 ### Scoring
 
-Base score: 100. Deductions: 🔴 Critical **-20**, 🟡 Warning **-5**, 🟢 Info **-1**. Default pass threshold: 95.
+Base score: 100. Default pass threshold: 95.
+
+| Level | Covers | Deduction |
+|-------|--------|-----------|
+| 🔴 Critical | Logic errors, security vulnerabilities, data risks, uncaught async errors, resource leaks / infinite loops | -20 each |
+| 🟡 Warning | Unhandled edge cases, type issues, missing error handling (UX-only; escalate to 🔴 if data loss / security risk) | -5 each |
+| 🟢 Info | Code duplication, unclear naming, perf hints, magic numbers / hardcoded strings, missing comments, style inconsistency | -1 each |
 
 ### Exit Codes
 
