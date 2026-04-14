@@ -124,6 +124,7 @@ npx ai-review-pipeline
 | `--fix` | 启用自动修复模式（循环 review+fix） |
 | `--file <path>` | 指定目标文件/文件夹/多目标（逗号分隔） |
 | `--full` | 配合 `--file` 使用，审查完整文件内容（无需 git 改动） |
+| `--model <name>` | 覆盖默认模型（如 `--model gpt-4o`） |
 | `--lang <zh\|en>` | 输出语言（默认中文） |
 | `--help` / `-h` | 显示帮助 |
 | `--version` / `-v` | 显示版本 |
@@ -288,9 +289,9 @@ npx ai-review-pipeline --file src/utils.ts --full
 
 | 级别 | 含义 | 扣分 |
 |------|------|------|
-| 🔴 必修 | 逻辑错误、安全漏洞、数据风险 | -15/个 |
+| 🔴 必修 | 逻辑错误、安全漏洞、数据风险 | -20/个 |
 | 🟡 建议 | 边界未处理、类型问题、错误处理缺失 | -5/个 |
-| 🟢 优化 | 代码重复、命名不清、性能隐患 | -2/个 |
+| 🟢 优化 | 代码重复、命名不清、性能隐患 | -1/个 |
 
 ## 环境变量
 
@@ -422,8 +423,13 @@ npx ai-review-pipeline --file src/a.vue --full        # Review full file
 | `--fix` | Enable auto-fix mode (review+fix loop) |
 | `--file <path>` | Target file/folder/multi-path (comma-separated) |
 | `--full` | Review full file content, use with `--file` |
+| `--model <name>` | Override default model (e.g. `--model gpt-4o`) |
 | `--json` | JSON output for CI |
 | `--lang <zh\|en>` | Output language (default: zh) |
+
+### Scoring
+
+Base score: 100. Deductions: 🔴 Critical **-20**, 🟡 Warning **-5**, 🟢 Info **-1**. Default pass threshold: 95.
 
 ### Exit Codes
 

@@ -17,6 +17,15 @@ export function buildSystemPrompt(customRules) {
 3. **🟢 优化（后续改进）** — 代码重复、命名不清、性能隐患
 ${rulesStr}
 
+## 评分规则
+
+基础分 100，按以下规则扣分：
+- 每个 🔴 问题：**-20 分**
+- 每个 🟡 问题：**-5 分**
+- 每个 🟢 问题：**-1 分**
+- 最低 0 分，不能为负数
+- 必须严格按此公式计算 score，不要自由估算
+
 ## 输出格式
 
 每个问题：
@@ -29,7 +38,7 @@ ${rulesStr}
 最后**必须**输出如下 JSON 块（用于机器解析）：
 \`\`\`json
 {
-  "score": <0-100 质量分>,
+  "score": <0-100 质量分，按评分规则计算>,
   "red": <🔴数量>,
   "yellow": <🟡数量>,
   "green": <🟢数量>,
@@ -51,6 +60,10 @@ ${diff}
 \`\`\``;
 }
 
+function calcScore(red, yellow, green) {
+  return Math.max(0, 100 - red * 20 - yellow * 5 - green * 1);
+}
+
 export function parseReview(content) {
   const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
   if (!jsonMatch) {
@@ -58,6 +71,10 @@ export function parseReview(content) {
   }
   try {
     const result = JSON.parse(jsonMatch[1]);
+    const red = result.red || 0;
+    const yellow = result.yellow || 0;
+    const green = result.green || 0;
+    result.score = calcScore(red, yellow, green);
     return { markdown: content, ...result, parseError: false };
   } catch {
     return { markdown: content, score: 0, red: 0, yellow: 0, green: 0, summary: 'JSON 解析失败，无法判定质量', issues: [], parseError: true };
