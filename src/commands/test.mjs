@@ -22,9 +22,10 @@ export async function run(args) {
   loadEnv();
   const config = loadConfig();
   const env = getEnvConfig();
-  const model = config.review.model || env.model;
+  const cliModel = args.includes('--model') ? args[args.indexOf('--model') + 1] : '';
+  const model = cliModel || config.review.model || env.model;
 
-  if (!env.apiKey) { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
+  if (!env.apiKey && env.provider !== 'ollama') { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
 
   await initProxy(env.proxy);
 

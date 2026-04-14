@@ -81,8 +81,8 @@ export function writeReport({ review, meta, outputDir, open }) {
 
   if (open) {
     try {
-      const cmd = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-      execSync(`${cmd} "${reportPath}"`, { stdio: 'ignore' });
+      const cmd = process.platform === 'win32' ? `start "" "${reportPath}"` : `${process.platform === 'darwin' ? 'open' : 'xdg-open'} "${reportPath}"`;
+      execSync(cmd, { stdio: 'ignore' });
     } catch { /* can't auto-open */ }
   }
   return reportPath;

@@ -5,6 +5,20 @@ import { readdirSync } from 'node:fs';
 
 const MAX_BUFFER = 5 * 1024 * 1024;
 const CODE_EXT = /\.(ts|tsx|vue|js|jsx|py|mjs|cjs|go|rs|java|kt|swift|rb|php|cs|uvue)$/;
+const DEFAULT_SKIP_DIRS = ['node_modules', '.git', 'dist', '.next', '.nuxt', '.output', 'build', 'coverage', '.ai-reports'];
+let _ignorePatterns = [];
+
+export function setIgnorePatterns(patterns) {
+  _ignorePatterns = patterns || [];
+}
+
+function isIgnored(filePath) {
+  if (_ignorePatterns.length === 0) return false;
+  return _ignorePatterns.some((p) => {
+    if (p.startsWith('*')) return filePath.endsWith(p.slice(1));
+    return filePath.includes(p);
+  });
+}
 
 function exec(cmd) {
   return execSync(cmd, { encoding: 'utf-8', maxBuffer: MAX_BUFFER });
@@ -29,8 +43,10 @@ function collectDirFiles(dir) {
   const results = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = resolve(dir, entry.name);
+    const rel = relative(process.cwd(), full);
+    if (isIgnored(rel)) continue;
     if (entry.isDirectory()) {
-      if (!['node_modules', '.git', 'dist', '.next'].includes(entry.name)) {
+      if (!DEFAULT_SKIP_DIRS.includes(entry.name)) {
         results.push(...collectDirFiles(full));
       }
     } else if (CODE_EXT.test(entry.name)) {

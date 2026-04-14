@@ -42,20 +42,19 @@ export function getProviderDefaults(provider) {
   return PROVIDERS[provider] || PROVIDERS.openai;
 }
 
-async function callOpenAICompatible({ baseUrl, apiKey, model, prompt, temperature, maxTokens }) {
+async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const messages = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'user', content: prompt });
+
   const resp = await fetchImpl(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature,
-      max_tokens: maxTokens,
-    }),
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
   });
   if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
   const data = await resp.json();
@@ -65,21 +64,24 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, prompt, temperatur
   };
 }
 
-async function callClaude({ baseUrl, apiKey, model, prompt, temperature, maxTokens }) {
+async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/v1/messages`;
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content: prompt }],
+    temperature,
+  };
+  if (systemPrompt) body.system = systemPrompt;
+
   const resp = await fetchImpl(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+      'anthropic-version': '2024-10-22',
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
-      temperature,
-    }),
+    body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
   const data = await resp.json();
@@ -94,9 +96,25 @@ async function callClaude({ baseUrl, apiKey, model, prompt, temperature, maxToke
   };
 }
 
-export async function callAI({ baseUrl, apiKey, model, prompt, temperature = 0.3, maxTokens = 4096, provider = 'openai' }) {
-  if (provider === 'claude') {
-    return callClaude({ baseUrl, apiKey, model, prompt, temperature, maxTokens });
+async function withRetry(fn, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const status = e.message?.match(/API (\d+)/)?.[1];
+      const retryable = !status || status === '429' || status === '500' || status === '502' || status === '503';
+      if (i >= retries || !retryable) throw e;
+      const delay = Math.min(1000 * 2 ** i, 8000);
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
-  return callOpenAICompatible({ baseUrl, apiKey, model, prompt, temperature, maxTokens });
+}
+
+export async function callAI({ baseUrl, apiKey, model, systemPrompt, prompt, temperature = 0.3, maxTokens = 4096, provider = 'openai' }) {
+  return withRetry(() => {
+    if (provider === 'claude') {
+      return callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens });
+    }
+    return callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens });
+  });
 }

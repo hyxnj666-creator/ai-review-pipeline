@@ -1,6 +1,6 @@
 {
   "name": "ai-review-pipeline",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "AI-powered code review & quality pipeline CLI. Review → Auto-fix → Re-review → Test → Report.",
   "type": "module",
   "bin": {
@@ -13,7 +13,7 @@
     "templates"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "test": "echo \"No tests yet\""

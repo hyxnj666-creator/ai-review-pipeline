@@ -46,16 +46,27 @@ export function loadConfig(cwd = process.cwd()) {
 }
 
 export function getEnvConfig() {
-  const apiKey = process.env.AI_REVIEW_API_KEY
-    || process.env.OPENAI_API_KEY
-    || process.env.DEEPSEEK_API_KEY
-    || process.env.ANTHROPIC_API_KEY
-    || process.env.DASHSCOPE_API_KEY
-    || process.env.GEMINI_API_KEY
-    || '';
+  const KEY_PROVIDER_MAP = [
+    ['AI_REVIEW_API_KEY', ''],
+    ['DEEPSEEK_API_KEY', 'deepseek'],
+    ['ANTHROPIC_API_KEY', 'claude'],
+    ['DASHSCOPE_API_KEY', 'qwen'],
+    ['GEMINI_API_KEY', 'gemini'],
+    ['OPENAI_API_KEY', 'openai'],
+  ];
+
+  let apiKey = '';
+  let inferredProvider = '';
+  for (const [envVar, prov] of KEY_PROVIDER_MAP) {
+    if (process.env[envVar]) {
+      apiKey = process.env[envVar];
+      inferredProvider = prov;
+      break;
+    }
+  }
 
   const baseUrl = process.env.AI_REVIEW_BASE_URL || '';
-  const providerHint = process.env.AI_REVIEW_PROVIDER || '';
+  const providerHint = process.env.AI_REVIEW_PROVIDER || inferredProvider;
   const model = process.env.AI_REVIEW_MODEL || '';
   const proxy = process.env.HTTPS_PROXY || '';
 

@@ -4,12 +4,12 @@
  * parseReview: extracts structured review data from AI response
  */
 
-export function buildPrompt(diff, customRules) {
+export function buildSystemPrompt(customRules) {
   const rulesStr = customRules.length
     ? '\n## 项目自定义规则（必须检查）\n' + customRules.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
 
-  return `你是一个资深代码审查员。请对以下 git diff 做 Code Review。
+  return `你是一个资深代码审查员。请对用户提供的 git diff 做 Code Review。
 
 ## 审查维度
 1. **🔴 必修（阻塞合并）** — 逻辑错误、安全漏洞（XSS/注入/敏感信息泄露）、数据风险（并发/金额精度/状态流转错误）
@@ -40,9 +40,11 @@ ${rulesStr}
 }
 \`\`\`
 
-无问题则 score 为 100，issues 为空数组。
+无问题则 score 为 100，issues 为空数组。`;
+}
 
-## Git Diff
+export function buildPrompt(diff) {
+  return `请审查以下代码变更：
 
 \`\`\`diff
 ${diff}
@@ -51,9 +53,13 @@ ${diff}
 
 export function parseReview(content) {
   const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
-  let result = { score: 100, red: 0, yellow: 0, green: 0, summary: '', issues: [] };
-  if (jsonMatch) {
-    try { result = JSON.parse(jsonMatch[1]); } catch { /* use default */ }
+  if (!jsonMatch) {
+    return { markdown: content, score: 0, red: 0, yellow: 0, green: 0, summary: 'AI 未返回结构化 JSON，无法判定质量', issues: [], parseError: true };
   }
-  return { markdown: content, ...result };
+  try {
+    const result = JSON.parse(jsonMatch[1]);
+    return { markdown: content, ...result, parseError: false };
+  } catch {
+    return { markdown: content, score: 0, red: 0, yellow: 0, green: 0, summary: 'JSON 解析失败，无法判定质量', issues: [], parseError: true };
+  }
 }

@@ -4,10 +4,10 @@ import { execSync } from 'node:child_process';
 import { loadEnv } from '../core/env.mjs';
 import { loadConfig, getEnvConfig } from '../core/config.mjs';
 import { initProxy, callAI } from '../core/ai-client.mjs';
-import { getDiff, getChangedFiles } from '../core/diff.mjs';
+import { getDiff, getChangedFiles, setIgnorePatterns } from '../core/diff.mjs';
 import { writeReport } from '../core/report.mjs';
 import { log, separator, t } from '../core/logger.mjs';
-import { buildPrompt, parseReview } from './review.mjs';
+import { buildSystemPrompt, buildPrompt, parseReview } from './review.mjs';
 
 // ─── Auto Fix (single file) ───
 async function fixFile({ filePath, issues, env, model, safetyMinRatio }) {
@@ -60,16 +60,17 @@ async function autoFix({ issues, skipLevels, env, model, safetyMinRatio }) {
     if (!fileMap.has(issue.file)) fileMap.set(issue.file, []);
     fileMap.get(issue.file).push(issue);
   }
-  if (fileMap.size === 0) return 0;
+  if (fileMap.size === 0) return { fixedCount: 0, fixedFiles: [] };
 
-  let fixed = 0;
+  let fixedCount = 0;
+  const fixedFiles = [];
   for (const [file, fileIssues] of fileMap) {
     log('🔧', t('fixFile', file, fileIssues.length));
     const ok = await fixFile({ filePath: file, issues: fileIssues, env, model, safetyMinRatio });
-    if (ok) { fixed++; log('✅', t('fixDone', file)); }
+    if (ok) { fixedCount++; fixedFiles.push(file); log('✅', t('fixDone', file)); }
     else { log('⚠️', t('fixFail', file)); }
   }
-  return fixed;
+  return { fixedCount, fixedFiles };
 }
 
 // ─── Test generation ───
@@ -113,17 +114,19 @@ export async function run(args) {
   loadEnv();
   const config = loadConfig();
   const env = getEnvConfig();
-  const model = config.review.model || env.model;
+  const cliModel = args.includes('--model') ? args[args.indexOf('--model') + 1] : '';
+  const model = cliModel || config.review.model || env.model;
 
-  if (!env.apiKey) { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
+  if (!env.apiKey && env.provider !== 'ollama') { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
 
   await initProxy(env.proxy);
+  setIgnorePatterns(config.ignore);
 
   // ── Parse args ──
   const fixMode = args.includes('--fix');
   const full = args.includes('--full');
   const noCommit = args.includes('--no-commit');
-  const noTest = args.includes('--no-test');
+  const noTest = args.includes('--no-test') || config.test.enabled === false;
   const noReport = args.includes('--no-report');
   const jsonOutput = args.includes('--json');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
@@ -131,9 +134,11 @@ export async function run(args) {
   const staged = args.includes('--staged');
   const maxRounds = Number(args.includes('--max-rounds') ? args[args.indexOf('--max-rounds') + 1] : 0) || config.review.maxRounds;
   const threshold = Number(args.includes('--threshold') ? args[args.indexOf('--threshold') + 1] : 0) || config.review.threshold;
+  const cliSkip = args.includes('--skip') ? (args[args.indexOf('--skip') + 1] || '') : '';
+  const configSkip = (config.review.skip || []).join(',');
+  const mergedSkip = [cliSkip, configSkip].filter(Boolean).join(',');
   const skipLevels = new Set(
-    (args.includes('--skip') ? (args[args.indexOf('--skip') + 1] || '') : '')
-      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    mergedSkip.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   );
 
   const modeLabel = fixMode ? t('modeFix') : t('modeReview');
@@ -154,6 +159,8 @@ export async function run(args) {
   let passed = false;
   let reviewTokens = null;
   const effectiveMaxRounds = fixMode ? maxRounds : 1;
+  const allFixedFiles = [];
+  const systemPrompt = buildSystemPrompt(config.review.customRules || []);
 
   while (round < effectiveMaxRounds) {
     round++;
@@ -175,8 +182,8 @@ export async function run(args) {
     if (!jsonOutput) log('📏', `${totalLines} lines`);
 
     const t0 = Date.now();
-    const prompt = buildPrompt(truncated, config.review.customRules || []);
-    const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, provider: env.provider });
+    const prompt = buildPrompt(truncated);
+    const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, systemPrompt, prompt, provider: env.provider });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     reviewTokens = tokens;
 
@@ -218,13 +225,14 @@ export async function run(args) {
       break;
     }
 
-    const fixedCount = await autoFix({
+    const { fixedCount, fixedFiles } = await autoFix({
       issues: fixableIssues,
       skipLevels,
       env,
       model,
       safetyMinRatio: config.fix.safetyMinRatio,
     });
+    allFixedFiles.push(...fixedFiles);
 
     if (!jsonOutput) {
       log('📦', t('fixCount', fixedCount));
@@ -290,12 +298,14 @@ export async function run(args) {
   }
 
   // ── Phase 4: Auto Commit (fix mode + passed only) ──
-  if (fixMode && passed && !noCommit) {
+  if (fixMode && passed && !noCommit && allFixedFiles.length > 0) {
     separator(`📦 ${t('commitTitle')}`);
     try {
-      execSync('git add -A', { encoding: 'utf-8' });
+      for (const f of allFixedFiles) {
+        execSync(`git add -- "${f}"`, { encoding: 'utf-8' });
+      }
       const msg = `refactor: AI pipeline auto-fix (score: ${lastReview.score})`;
-      execSync(`git commit -m "${msg}"`, { encoding: 'utf-8' });
+      execSync(`git commit -m "${msg.replace(/"/g, '\\"')}"`, { encoding: 'utf-8' });
       log('✅', t('commitDone', msg));
     } catch (e) {
       log('⚠️', t('commitFail', e.message?.split('\n')[0]));
