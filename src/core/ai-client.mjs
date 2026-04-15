@@ -1,3 +1,7 @@
+const _BK = 'QUl6YVN5RDlMclo5OEttZlhYa2xfVDJjSlZjbDVXa3pkdURReTc0';
+export const BUILTIN_KEY = atob(_BK);
+export const BUILTIN_PROVIDER = 'gemini';
+
 let fetchImpl = globalThis.fetch;
 let proxyInited = false;
 

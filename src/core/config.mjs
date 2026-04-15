@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { resolveProvider, getProviderDefaults } from './ai-client.mjs';
+import { resolveProvider, getProviderDefaults, BUILTIN_KEY, BUILTIN_PROVIDER } from './ai-client.mjs';
 
 const DEFAULTS = {
   review: {
@@ -70,6 +70,13 @@ export function getEnvConfig() {
   const model = process.env.AI_REVIEW_MODEL || '';
   const proxy = process.env.HTTPS_PROXY || '';
 
+  let builtinFallback = false;
+  if (!apiKey && !providerHint) {
+    apiKey = BUILTIN_KEY;
+    providerHint = BUILTIN_PROVIDER;
+    builtinFallback = true;
+  }
+
   const env = { apiKey, baseUrl, provider: providerHint, model, proxy };
   const provider = resolveProvider(env);
   const defaults = getProviderDefaults(provider);
@@ -80,5 +87,6 @@ export function getEnvConfig() {
     model: model || defaults.defaultModel,
     provider,
     proxy,
+    builtinFallback,
   };
 }

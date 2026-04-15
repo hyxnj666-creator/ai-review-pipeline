@@ -26,6 +26,7 @@ export async function run(args) {
   const model = cliModel || config.review.model || env.model;
 
   if (!env.apiKey && env.provider !== 'ollama') { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
+  if (env.builtinFallback) log('💡', t('builtinFallback'));
 
   await initProxy(env.proxy);
 

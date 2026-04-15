@@ -1,5 +1,6 @@
 export default {
   noApiKey: 'Missing API Key. Set one of the following in .env.local or environment:\n  OpenAI:   OPENAI_API_KEY\n  DeepSeek: DEEPSEEK_API_KEY\n  Claude:   ANTHROPIC_API_KEY\n  Qwen:     DASHSCOPE_API_KEY\n  Gemini:   GEMINI_API_KEY\n  Generic:  AI_REVIEW_API_KEY',
+  builtinFallback: 'Using built-in free model (Gemini). Configure your own API Key for faster and more stable experience.',
   noChanges: 'No code changes detected.',
   diffLines: (n, label, trunc) => `Detected ${n} lines of changes (${label})${trunc ? ', truncated' : ''}`,
   provider: (p) => `Provider: ${p}`,
