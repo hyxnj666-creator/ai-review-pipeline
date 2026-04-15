@@ -1,6 +1,6 @@
 {
   "name": "ai-review-pipeline",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "AI-powered code review & quality pipeline CLI. Review → Auto-fix → Re-review → Test → Report.",
   "type": "module",
   "bin": {

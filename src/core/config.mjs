@@ -66,7 +66,7 @@ export function getEnvConfig() {
   }
 
   const baseUrl = process.env.AI_REVIEW_BASE_URL || '';
-  const providerHint = process.env.AI_REVIEW_PROVIDER || inferredProvider;
+  let providerHint = process.env.AI_REVIEW_PROVIDER || inferredProvider;
   const model = process.env.AI_REVIEW_MODEL || '';
   const proxy = process.env.HTTPS_PROXY || '';
 
