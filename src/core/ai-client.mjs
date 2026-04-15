@@ -1,4 +1,4 @@
-const _BK = 'QUl6YVN5RDlMclo5OEttZlhYa2xfVDJjSlZjbDVXa3pkdURReTc0';
+const _BK = 'QUl6YVN5Q3JBZ1dsNXd1eTEzY3h3QnVZanFwdzNyalQzOWJzc3NV';
 export const BUILTIN_KEY = atob(_BK);
 export const BUILTIN_PROVIDER = 'gemini';
 
