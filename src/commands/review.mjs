@@ -4,7 +4,55 @@
  * parseReview: extracts structured review data from AI response
  */
 
-export function buildSystemPrompt(customRules) {
+export function buildSystemPrompt(customRules, lang = 'zh') {
+  if (lang === 'en') {
+    const rulesStr = customRules.length
+      ? '\n## Project-specific Rules (must check)\n' + customRules.map((r, i) => `${i + 1}. ${r}`).join('\n')
+      : '';
+
+    return `You are a senior code reviewer. Review the git diff provided by the user.
+
+## Review Dimensions
+1. **🔴 Critical (blocks merge)** — Logic errors, security vulnerabilities (XSS/injection/sensitive data leak), data risks (concurrency/precision/state flow), uncaught async errors (async without try-catch / Promise without .catch), resource leaks or infinite loops
+2. **🟡 Warning (should fix)** — Unhandled edge cases (null/undefined/timeout/duplicate submission), type issues (any/as assertion), missing error handling (UX-only; escalate to 🔴 if it may cause data loss or security risk)
+3. **🟢 Info (improve later)** — Code duplication, unclear naming, perf hints, magic numbers/hardcoded strings, complex logic without comments, style inconsistency
+${rulesStr}
+
+## Scoring
+
+Base score: 100. Deductions:
+- Each 🔴 issue: **-20 points**
+- Each 🟡 issue: **-5 points**
+- Each 🟢 issue: **-1 point**
+- Minimum 0, never negative
+- Calculate score strictly by this formula
+
+## Output Format
+
+Per issue:
+### [🔴/🟡/🟢] Issue title
+- **File**: file path
+- **Line**: approximate line number
+- **Issue**: description
+- **Fix**: fix suggestion or code example
+
+You **must** output the following JSON block at the end (for machine parsing):
+\`\`\`json
+{
+  "score": <0-100 quality score>,
+  "red": <🔴 count>,
+  "yellow": <🟡 count>,
+  "green": <🟢 count>,
+  "summary": "<one-line summary>",
+  "issues": [
+    { "file": "<path>", "line": <line>, "severity": "red|yellow|green", "title": "<issue>", "desc": "<description>", "fix": "<fix suggestion>" }
+  ]
+}
+\`\`\`
+
+If no issues, score is 100 and issues is an empty array.`;
+  }
+
   const rulesStr = customRules.length
     ? '\n## 项目自定义规则（必须检查）\n' + customRules.map((r, i) => `${i + 1}. ${r}`).join('\n')
     : '';
@@ -52,8 +100,9 @@ ${rulesStr}
 无问题则 score 为 100，issues 为空数组。`;
 }
 
-export function buildPrompt(diff) {
-  return `请审查以下代码变更：
+export function buildPrompt(diff, lang = 'zh') {
+  const label = lang === 'en' ? 'Please review the following code changes:' : '请审查以下代码变更：';
+  return `${label}
 
 \`\`\`diff
 ${diff}

@@ -4,7 +4,7 @@ import { execSync } from 'node:child_process';
 import { loadEnv } from '../core/env.mjs';
 import { loadConfig, getEnvConfig } from '../core/config.mjs';
 import { initProxy, callAI } from '../core/ai-client.mjs';
-import { log, separator, t } from '../core/logger.mjs';
+import { log, separator, t, createSpinner } from '../core/logger.mjs';
 
 function detectStack(code, file) {
   const ext = extname(file).toLowerCase();
@@ -107,9 +107,12 @@ export async function run(args) {
 ${sourceCode}
 \`\`\``;
 
+  const spinner = createSpinner(t('testGenerating'));
+  spinner.start();
   const t0 = Date.now();
   const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4, provider: env.provider });
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  spinner.stop();
 
   separator(t('testTitle'));
   console.log(content);

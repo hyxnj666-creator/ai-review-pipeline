@@ -17,12 +17,13 @@ export async function initProxy(proxyUrl) {
 }
 
 const PROVIDERS = {
-  openai:   { baseUrl: 'https://api.openai.com/v1',        defaultModel: 'gpt-4o-mini' },
-  deepseek: { baseUrl: 'https://api.deepseek.com/v1',      defaultModel: 'deepseek-chat' },
-  ollama:   { baseUrl: 'http://localhost:11434/v1',         defaultModel: 'qwen2.5-coder' },
-  claude:   { baseUrl: 'https://api.anthropic.com',         defaultModel: 'claude-sonnet-4-20250514' },
-  qwen:     { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
-  gemini:   { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.0-flash' },
+  openai:      { baseUrl: 'https://api.openai.com/v1',        defaultModel: 'gpt-4o-mini' },
+  deepseek:    { baseUrl: 'https://api.deepseek.com/v1',      defaultModel: 'deepseek-chat' },
+  ollama:      { baseUrl: 'http://localhost:11434/v1',         defaultModel: 'qwen2.5-coder' },
+  claude:      { baseUrl: 'https://api.anthropic.com',         defaultModel: 'claude-sonnet-4-20250514' },
+  qwen:        { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
+  gemini:      { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.0-flash' },
+  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'Qwen/Qwen2.5-Coder-7B-Instruct' },
 };
 
 export function resolveProvider(env) {
@@ -37,6 +38,7 @@ export function resolveProvider(env) {
     if (env.baseUrl.includes('localhost:11434') || env.baseUrl.includes('ollama')) return 'ollama';
     if (env.baseUrl.includes('dashscope')) return 'qwen';
     if (env.baseUrl.includes('generativelanguage.googleapis')) return 'gemini';
+    if (env.baseUrl.includes('siliconflow')) return 'siliconflow';
   }
 
   return 'openai';
@@ -46,11 +48,16 @@ export function getProviderDefaults(provider) {
   return PROVIDERS[provider] || PROVIDERS.openai;
 }
 
-async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens }) {
+async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
+
+  const shouldStream = stream && onToken;
+  const body = { model, messages, temperature, max_tokens: maxTokens };
+  if (shouldStream) body.stream = true;
+  if (responseFormat && !shouldStream) body.response_format = responseFormat;
 
   const resp = await fetchImpl(url, {
     method: 'POST',
@@ -58,9 +65,38 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+    body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+
+  if (shouldStream) {
+    let full = '';
+    const reader = resp.body?.getReader?.();
+    if (!reader) {
+      const data = await resp.json();
+      return { content: data.choices?.[0]?.message?.content ?? '', tokens: data.usage };
+    }
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ') || trimmed === 'data: [DONE]') continue;
+        try {
+          const chunk = JSON.parse(trimmed.slice(6));
+          const delta = chunk.choices?.[0]?.delta?.content || '';
+          if (delta) { full += delta; onToken(delta); }
+        } catch { /* skip malformed chunk */ }
+      }
+    }
+    return { content: full, tokens: null };
+  }
+
   const data = await resp.json();
   return {
     content: data.choices?.[0]?.message?.content ?? '',
@@ -68,13 +104,15 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
   };
 }
 
-async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens }) {
+async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/v1/messages`;
+  const shouldStream = stream && onToken;
   const body = {
     model,
     max_tokens: maxTokens,
     messages: [{ role: 'user', content: prompt }],
     temperature,
+    ...(shouldStream ? { stream: true } : {}),
   };
   if (systemPrompt) body.system = systemPrompt;
 
@@ -88,6 +126,38 @@ async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temper
     body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+
+  if (shouldStream) {
+    let full = '';
+    const reader = resp.body?.getReader?.();
+    if (!reader) {
+      const data = await resp.json();
+      const text = data.content?.map((b) => b.text).join('') ?? '';
+      return { content: text, tokens: null };
+    }
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        try {
+          const evt = JSON.parse(trimmed.slice(6));
+          if (evt.type === 'content_block_delta') {
+            const delta = evt.delta?.text || '';
+            if (delta) { full += delta; onToken(delta); }
+          }
+        } catch { /* skip */ }
+      }
+    }
+    return { content: full, tokens: null };
+  }
+
   const data = await resp.json();
   const text = data.content?.map((b) => b.text).join('') ?? '';
   return {
@@ -114,11 +184,11 @@ async function withRetry(fn, retries = 2) {
   }
 }
 
-export async function callAI({ baseUrl, apiKey, model, systemPrompt, prompt, temperature = 0.3, maxTokens = 4096, provider = 'openai' }) {
+export async function callAI({ baseUrl, apiKey, model, systemPrompt, prompt, temperature = 0.3, maxTokens = 4096, provider = 'openai', stream = false, onToken, responseFormat }) {
   return withRetry(() => {
     if (provider === 'claude') {
-      return callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens });
+      return callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken });
     }
-    return callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens });
+    return callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat });
   });
 }

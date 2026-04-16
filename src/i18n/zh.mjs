@@ -1,6 +1,8 @@
 export default {
   noApiKey: '缺少 API Key，请配置对应环境变量（支持 .env.local）:\n  OpenAI:   OPENAI_API_KEY\n  DeepSeek: DEEPSEEK_API_KEY\n  Claude:   ANTHROPIC_API_KEY\n  通义千问: DASHSCOPE_API_KEY\n  Gemini:   GEMINI_API_KEY\n  通用:     AI_REVIEW_API_KEY',
   builtinFallback: '当前使用内置免费模型（Gemini），配置自己的 API Key 可获得更快更稳定的体验。',
+  chunkReview: (n) => `Diff 过大，已拆分为 ${n} 个分片逐一审查`,
+  chunkProgress: (i, n) => `审查分片 ${i}/${n}...`,
   noChanges: '没有检测到代码变更。',
   diffLines: (n, label, trunc) => `检测到 ${n} 行变更（${label}）${trunc ? '，已截断' : ''}`,
   provider: (p) => `Provider: ${p}`,

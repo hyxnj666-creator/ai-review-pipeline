@@ -6,8 +6,62 @@ import { loadConfig, getEnvConfig } from '../core/config.mjs';
 import { initProxy, callAI } from '../core/ai-client.mjs';
 import { getDiff, getChangedFiles, setIgnorePatterns } from '../core/diff.mjs';
 import { writeReport } from '../core/report.mjs';
-import { log, separator, t } from '../core/logger.mjs';
+import { log, separator, t, getLang } from '../core/logger.mjs';
 import { buildSystemPrompt, buildPrompt, parseReview } from './review.mjs';
+
+// ─── Chunk splitting & merging ───
+function splitDiffByFile(diff, maxLines) {
+  const fileDiffs = [];
+  let current = [];
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ') && current.length > 0) {
+      fileDiffs.push(current.join('\n'));
+      current = [];
+    }
+    current.push(line);
+  }
+  if (current.length > 0) fileDiffs.push(current.join('\n'));
+  if (fileDiffs.length <= 1) return [diff.split('\n').slice(0, maxLines).join('\n')];
+
+  const chunks = [];
+  let chunk = [];
+  let lineCount = 0;
+  for (const fd of fileDiffs) {
+    const lines = fd.split('\n').length;
+    if (lineCount + lines > maxLines && chunk.length > 0) {
+      chunks.push(chunk.join('\n'));
+      chunk = [];
+      lineCount = 0;
+    }
+    chunk.push(fd);
+    lineCount += lines;
+  }
+  if (chunk.length > 0) chunks.push(chunk.join('\n'));
+  return chunks;
+}
+
+function mergeReviews(results) {
+  const allIssues = [];
+  let totalRed = 0, totalYellow = 0, totalGreen = 0;
+  const summaries = [];
+  const markdowns = [];
+  for (const r of results) {
+    allIssues.push(...(r.issues || []));
+    totalRed += r.red || 0;
+    totalYellow += r.yellow || 0;
+    totalGreen += r.green || 0;
+    if (r.summary) summaries.push(r.summary);
+    if (r.markdown) markdowns.push(r.markdown);
+  }
+  const score = Math.max(0, 100 - totalRed * 20 - totalYellow * 5 - totalGreen * 1);
+  return {
+    score, red: totalRed, yellow: totalYellow, green: totalGreen,
+    issues: allIssues,
+    summary: summaries.join('; ') || '',
+    markdown: markdowns.join('\n\n---\n\n'),
+    parseError: false,
+  };
+}
 
 // ─── Auto Fix (single file) ───
 async function fixFile({ filePath, issues, env, model, safetyMinRatio }) {
@@ -157,11 +211,13 @@ export async function run(args) {
   // ── Phase 1: Review (+ Fix loop if --fix) ──
   let round = 0;
   let lastReview = { score: 0, red: 0, yellow: 0, green: 0, summary: '', issues: [], markdown: '' };
+  let prevScore = null;
   let passed = false;
   let reviewTokens = null;
   const effectiveMaxRounds = fixMode ? maxRounds : 1;
   const allFixedFiles = [];
-  const systemPrompt = buildSystemPrompt(config.review.customRules || []);
+  const lang = getLang();
+  const systemPrompt = buildSystemPrompt(config.review.customRules || [], lang);
 
   while (round < effectiveMaxRounds) {
     round++;
@@ -176,26 +232,58 @@ export async function run(args) {
     }
 
     const totalLines = diff.split('\n').length;
-    const truncated = totalLines > config.review.maxDiffLines
-      ? diff.split('\n').slice(0, config.review.maxDiffLines).join('\n') + '\n... (truncated)'
-      : diff;
-
     if (!jsonOutput) log('📏', `${totalLines} lines`);
 
     const t0 = Date.now();
-    const prompt = buildPrompt(truncated);
-    const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, systemPrompt, prompt, provider: env.provider });
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    reviewTokens = tokens;
 
-    lastReview = parseReview(content);
+    if (totalLines > config.review.maxDiffLines) {
+      // Split by file and review in chunks
+      const chunks = splitDiffByFile(diff, config.review.maxDiffLines);
+      if (!jsonOutput) log('📦', t('chunkReview', chunks.length));
+
+      const chunkResults = [];
+      for (let ci = 0; ci < chunks.length; ci++) {
+        if (!jsonOutput) log('📝', t('chunkProgress', ci + 1, chunks.length));
+        const chunkPrompt = buildPrompt(chunks[ci], lang);
+        const useStream = !jsonOutput;
+        if (useStream) process.stdout.write('\n');
+        const { content: chunkContent } = await callAI({
+          baseUrl: env.baseUrl, apiKey: env.apiKey, model, systemPrompt, prompt: chunkPrompt,
+          provider: env.provider, stream: useStream,
+          onToken: useStream ? (tok) => process.stdout.write(tok) : undefined,
+        });
+        if (useStream) process.stdout.write('\n');
+        chunkResults.push(parseReview(chunkContent));
+      }
+      lastReview = mergeReviews(chunkResults);
+    } else {
+      const prompt = buildPrompt(diff, lang);
+      const useStream = !jsonOutput;
+      if (useStream) process.stdout.write('\n');
+      const { content, tokens } = await callAI({
+        baseUrl: env.baseUrl, apiKey: env.apiKey, model, systemPrompt, prompt,
+        provider: env.provider, stream: useStream,
+        onToken: useStream ? (tok) => process.stdout.write(tok) : undefined,
+      });
+      if (useStream) process.stdout.write('\n');
+      reviewTokens = tokens;
+      lastReview = parseReview(content);
+    }
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
     if (!jsonOutput) {
-      console.log('\n' + lastReview.markdown + '\n');
-      log('📊', t('score', lastReview.score, lastReview.red, lastReview.yellow, lastReview.green));
-      log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${tokens ? ` | ${t('tokens', tokens.prompt_tokens, tokens.completion_tokens, tokens.total_tokens)}` : ''}`);
+      console.log();
+      let scoreText = t('score', lastReview.score, lastReview.red, lastReview.yellow, lastReview.green);
+      if (prevScore !== null) {
+        const diff = lastReview.score - prevScore;
+        scoreText += diff > 0 ? ` (↑${diff})` : diff < 0 ? ` (↓${Math.abs(diff)})` : ' (→)';
+      }
+      log('📊', scoreText);
+      log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${reviewTokens ? ` | ${t('tokens', reviewTokens.prompt_tokens, reviewTokens.completion_tokens, reviewTokens.total_tokens)}` : ''}`);
       log('💬', lastReview.summary);
     }
+    prevScore = lastReview.score;
 
     const effectiveRed = skipLevels.has('red') ? 0 : lastReview.red;
     if (lastReview.score >= threshold && effectiveRed === 0) {

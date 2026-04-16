@@ -9,15 +9,17 @@ AI-powered code quality pipeline CLI — Review + Test + Report in one command. 
 ## Features
 
 - **Zero config** — Built-in free AI model, `npx ai-review-pipeline` works out of the box with no API Key
+- **Streaming output** — Real-time token-by-token response, no more staring at a blank screen
+- **Large diff chunking** — Auto-splits oversized diffs by file for complete coverage
 - **Zero dependencies** — No required deps, instant `npx` execution
-- **Multi-provider** — OpenAI / DeepSeek / Claude / Qwen / Gemini / Ollama, auto-detected
+- **Multi-provider** — OpenAI / DeepSeek / Claude / Qwen / Gemini / SiliconFlow / Ollama, auto-detected
 - **Unified pipeline** — Default: Review + Test + Report (read-only). `--fix` enables auto-fix loop
 - **Flexible targets** — Files, folders, comma-separated multi-targets
 - **`--full` mode** — Review entire file content without git changes
 - **HTML reports** — Score + issue list + fix suggestions, attachable to PRs
-- **Project config** — `.ai-pipeline.json` shared across team, works on clone
+- **JSONC config** — `.ai-pipeline.json` with comments support, shared across team
 - **CI-ready** — `--json` output + exit codes for GitHub Actions / GitLab CI
-- **Multi-language output** — Default: Chinese. `--lang en` for English
+- **Bilingual prompts** — `--lang en` switches both output AND AI prompt to English
 - **Multi-language code** — TypeScript / JavaScript / Vue / Python / Go / Rust / Java / Swift / PHP / Kotlin
 
 ## Quick Start
@@ -223,6 +225,7 @@ ai-rp init    # Creates .ai-pipeline.json in project root
 | **Claude** | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` | Strong at code |
 | **Qwen** | `qwen-plus` | `DASHSCOPE_API_KEY` | Alibaba Cloud |
 | **Gemini** | `gemini-2.0-flash` | `GEMINI_API_KEY` | Google |
+| **SiliconFlow** | `Qwen2.5-Coder-7B` | `SILICONFLOW_API_KEY` | Free tier available (China) |
 | **Ollama** | `qwen2.5-coder` | No key needed | Local, private |
 | **Custom** | — | `AI_REVIEW_API_KEY` | Any OpenAI-compatible API |
 

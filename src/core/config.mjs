@@ -32,7 +32,9 @@ export function loadConfig(cwd = process.cwd()) {
     const p = resolve(cwd, name);
     if (!existsSync(p)) continue;
     try {
-      const u = JSON.parse(readFileSync(p, 'utf-8'));
+      const raw = readFileSync(p, 'utf-8');
+      const stripped = raw.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      const u = JSON.parse(stripped);
       return {
         review: { ...DEFAULTS.review, ...u.review },
         fix: { ...DEFAULTS.fix, ...u.fix },
@@ -52,6 +54,7 @@ export function getEnvConfig() {
     ['ANTHROPIC_API_KEY', 'claude'],
     ['DASHSCOPE_API_KEY', 'qwen'],
     ['GEMINI_API_KEY', 'gemini'],
+    ['SILICONFLOW_API_KEY', 'siliconflow'],
     ['OPENAI_API_KEY', 'openai'],
   ];
 
