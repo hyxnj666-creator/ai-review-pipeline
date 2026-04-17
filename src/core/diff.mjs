@@ -5,7 +5,7 @@ import { readdirSync } from 'node:fs';
 
 const MAX_BUFFER = 5 * 1024 * 1024;
 const CODE_EXT = /\.(ts|tsx|vue|js|jsx|py|mjs|cjs|go|rs|java|kt|swift|rb|php|cs|uvue)$/;
-const DEFAULT_SKIP_DIRS = ['node_modules', '.git', 'dist', '.next', '.nuxt', '.output', 'build', 'coverage', '.ai-reports'];
+const DEFAULT_SKIP_DIRS = ['node_modules', '.git', 'dist', '.next', '.nuxt', '.output', 'build', 'coverage', '.ai-reports', '.ai-tests'];
 let _ignorePatterns = [];
 
 export function setIgnorePatterns(patterns) {
@@ -63,7 +63,7 @@ export function getDiff({ file, branch, staged, full } = {}) {
       return paths.map((p) => readFileAsReview(p)).filter(Boolean).join('\n');
     }
     try {
-      const diff = exec(`git diff HEAD -- ${paths.join(' ')}`);
+      const diff = exec(`git diff HEAD -- ${paths.map((p) => `"${p}"`).join(' ')}`);
       if (diff.trim()) return diff;
     } catch { /* not in git repo or no diff, fall through */ }
     return paths.map((p) => readFileAsReview(p)).filter(Boolean).join('\n');
@@ -94,7 +94,7 @@ export function getChangedFiles({ file, staged, full } = {}) {
     const paths = file.split(',').map((s) => s.trim()).filter(Boolean);
     if (full) return resolveFilePaths(paths);
     try {
-      const diffFiles = exec(`git diff HEAD --name-only --diff-filter=ACMR -- ${paths.join(' ')}`)
+      const diffFiles = exec(`git diff HEAD --name-only --diff-filter=ACMR -- ${paths.map((p) => `"${p}"`).join(' ')}`)
         .trim().split('\n').filter(Boolean).filter((f) => CODE_EXT.test(f));
       if (diffFiles.length) return diffFiles;
     } catch { /* fall through */ }

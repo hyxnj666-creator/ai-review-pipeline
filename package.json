@@ -1,7 +1,7 @@
 {
   "name": "ai-review-pipeline",
-  "version": "4.0.0",
-  "description": "AI-powered code review & quality pipeline CLI. Review → Auto-fix → Re-review → Test → Report.",
+  "version": "5.0.1",
+  "description": "Zero-config AI code quality pipeline CLI. Review current git changes or target files directly, then test, report, and auto-fix with --fix.",
   "type": "module",
   "bin": {
     "ai-review-pipeline": "bin/cli.mjs",
@@ -16,17 +16,21 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "echo \"No tests yet\""
+    "test": "echo \"No tests yet\"",
+    "benchmark": "node scripts/benchmark.mjs"
   },
   "keywords": [
     "ai",
     "code-review",
     "pipeline",
+    "zero-config",
     "openai",
     "quality",
     "cli",
     "review",
     "auto-fix",
+    "git-diff",
+    "full-file-review",
     "testing",
     "devtools"
   ],

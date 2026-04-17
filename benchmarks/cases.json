@@ -1,0 +1,89 @@
+[
+  {
+    "id": "unsafe-html",
+    "file": "benchmarks/fixtures/unsafe-html.tsx",
+    "expect": {
+      "minCounts": {
+        "red": 1
+      },
+      "mustInclude": [
+        "dangerouslySetInnerHTML|innerHTML|XSS|html"
+      ],
+      "maxScore": 80
+    }
+  },
+  {
+    "id": "unguarded-map",
+    "file": "benchmarks/fixtures/unguarded-map.tsx",
+    "expect": {
+      "minCounts": {
+        "yellow": 1
+      },
+      "mustInclude": [
+        "\\.map|length|optional chaining|null|undefined"
+      ],
+      "maxScore": 95
+    }
+  },
+  {
+    "id": "tailwind-noise",
+    "file": "benchmarks/fixtures/tailwind-noise.tsx",
+    "expect": {
+      "maxCounts": {
+        "red": 0,
+        "yellow": 0,
+        "green": 0
+      },
+      "mustNotInclude": [
+        "magic number|魔法数字"
+      ],
+      "minScore": 95
+    }
+  },
+  {
+    "id": "hardcoded-secret",
+    "file": "benchmarks/fixtures/hardcoded-secret.ts",
+    "expect": {
+      "minCounts": {
+        "red": 1
+      },
+      "mustInclude": [
+        "secret|敏感|key|凭证|hardcod"
+      ],
+      "maxScore": 80
+    }
+  },
+  {
+    "id": "unsafe-any",
+    "file": "benchmarks/fixtures/unsafe-any.ts",
+    "expect": {
+      "minIssueCount": 1,
+      "mustInclude": [
+        "any|assert|断言|null|undefined|map"
+      ],
+      "maxScore": 95
+    }
+  },
+  {
+    "id": "unhandled-fetch",
+    "file": "benchmarks/fixtures/unhandled-fetch.ts",
+    "expect": {
+      "minIssueCount": 1,
+      "mustInclude": [
+        "await|catch|async|fetch|promise|错误处理"
+      ],
+      "maxScore": 95
+    }
+  },
+  {
+    "id": "duplicate-submit",
+    "file": "benchmarks/fixtures/duplicate-submit.tsx",
+    "expect": {
+      "minIssueCount": 1,
+      "mustInclude": [
+        "重复提交|duplicate|loading|disabled|竞态|await|pay"
+      ],
+      "maxScore": 95
+    }
+  }
+]

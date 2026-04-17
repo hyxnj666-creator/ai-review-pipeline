@@ -5,8 +5,10 @@ import { loadEnv } from '../core/env.mjs';
 import { loadConfig, getEnvConfig } from '../core/config.mjs';
 import { initProxy, callAI } from '../core/ai-client.mjs';
 import { getDiff, getChangedFiles, setIgnorePatterns } from '../core/diff.mjs';
+import { runRuleChecks } from '../core/rule-checker.mjs';
 import { writeReport } from '../core/report.mjs';
 import { log, separator, t, getLang } from '../core/logger.mjs';
+import { buildSourceFromFiles, runAiTestPipeline } from '../core/test-executor.mjs';
 import { buildSystemPrompt, buildPrompt, parseReview } from './review.mjs';
 
 // ─── Chunk splitting & merging ───
@@ -41,30 +43,36 @@ function splitDiffByFile(diff, maxLines) {
 }
 
 function mergeReviews(results) {
-  const allIssues = [];
-  let totalRed = 0, totalYellow = 0, totalGreen = 0;
   const summaries = [];
   const markdowns = [];
+  const allIssues = [];
+  const seen = new Set();
   for (const r of results) {
-    allIssues.push(...(r.issues || []));
-    totalRed += r.red || 0;
-    totalYellow += r.yellow || 0;
-    totalGreen += r.green || 0;
+    for (const issue of (r.issues || [])) {
+      const key = `${issue.severity || ''}::${issue.file || ''}::${issue.title || ''}::${issue.code || ''}::${issue.line || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      allIssues.push(issue);
+    }
     if (r.summary) summaries.push(r.summary);
     if (r.markdown) markdowns.push(r.markdown);
   }
+  const totalRed = allIssues.filter((issue) => issue.severity === 'red').length;
+  const totalYellow = allIssues.filter((issue) => issue.severity === 'yellow').length;
+  const totalGreen = allIssues.filter((issue) => issue.severity === 'green').length;
+  const totalBlue = allIssues.filter((issue) => issue.severity === 'blue').length;
   const score = Math.max(0, 100 - totalRed * 20 - totalYellow * 5 - totalGreen * 1);
   return {
-    score, red: totalRed, yellow: totalYellow, green: totalGreen,
+    score, red: totalRed, yellow: totalYellow, green: totalGreen, blue: totalBlue,
     issues: allIssues,
-    summary: summaries.join('; ') || '',
+    summary: [...new Set(summaries)].join('; ') || '',
     markdown: markdowns.join('\n\n---\n\n'),
     parseError: false,
   };
 }
 
 // ─── Auto Fix (single file) ───
-async function fixFile({ filePath, issues, env, model, safetyMinRatio }) {
+async function fixFile({ filePath, issues, env, model, safetyMinRatio, temperature, maxTokens }) {
   const fullPath = resolve(process.cwd(), filePath);
   if (!existsSync(fullPath)) return false;
 
@@ -90,7 +98,7 @@ ${issueList}
 ${source}
 \`\`\``;
 
-  const { content } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.2, provider: env.provider });
+  const { content } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature, maxTokens, provider: env.provider });
   const codeMatch = content.match(/```(?:\w+)?\s*\n([\s\S]*?)```/);
   if (!codeMatch) return false;
 
@@ -105,12 +113,13 @@ ${source}
 }
 
 // ─── Auto Fix (batch) ───
-async function autoFix({ issues, skipLevels, env, model, safetyMinRatio }) {
+async function autoFix({ issues, skipLevels, env, model, safetyMinRatio, temperature, maxTokens }) {
   const fileMap = new Map();
   for (const issue of issues) {
     if (!issue.file) continue;
     if (skipLevels.has(issue.severity)) continue;
     if (issue.severity === 'green' && !skipLevels.has('none')) continue;
+    if (issue.severity === 'blue') continue;
     if (!fileMap.has(issue.file)) fileMap.set(issue.file, []);
     fileMap.get(issue.file).push(issue);
   }
@@ -120,47 +129,11 @@ async function autoFix({ issues, skipLevels, env, model, safetyMinRatio }) {
   const fixedFiles = [];
   for (const [file, fileIssues] of fileMap) {
     log('🔧', t('fixFile', file, fileIssues.length));
-    const ok = await fixFile({ filePath: file, issues: fileIssues, env, model, safetyMinRatio });
+    const ok = await fixFile({ filePath: file, issues: fileIssues, env, model, safetyMinRatio, temperature, maxTokens });
     if (ok) { fixedCount++; fixedFiles.push(file); log('✅', t('fixDone', file)); }
     else { log('⚠️', t('fixFail', file)); }
   }
   return { fixedCount, fixedFiles };
-}
-
-// ─── Test generation ───
-async function generateTests({ files, env, model, config }) {
-  const codeFiles = files.filter((f) => existsSync(resolve(process.cwd(), f)));
-  if (codeFiles.length === 0) return '';
-
-  const sourceSnippets = codeFiles.map((f) => {
-    const code = readFileSync(resolve(process.cwd(), f), 'utf-8');
-    const lines = code.split('\n');
-    const truncated = lines.length > 200 ? lines.slice(0, 200).join('\n') + '\n// ...' : code;
-    return `// ===== ${f} =====\n${truncated}`;
-  }).join('\n\n');
-
-  const ext = extname(codeFiles[0]).toLowerCase();
-  const stack = config.test.stack !== 'auto' ? config.test.stack :
-    ext === '.py' ? 'Python (pytest)' : ext === '.vue' ? 'Vue3 (Vitest)' : 'React/TypeScript (Vitest)';
-
-  const prompt = `你是一个资深测试工程师。技术栈: ${stack}。请为以下代码生成测试用例。
-
-## 分三类
-1. **✅ 功能用例** — 正常业务流程
-2. **⚔️ 对抗用例** — 异常输入、XSS、越权
-3. **🔲 边界用例** — 空值、0、极大值、超时
-
-输出每条用例: [类型] 名称 | 输入 | 预期结果
-
-最后输出 ${config.test.maxCases} 个关键用例的**可运行测试代码**。
-
-## 代码
-
-${sourceSnippets}`;
-
-  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4, provider: env.provider });
-  log('📊', `Test Tokens: ${tokens?.total_tokens || 'N/A'}`);
-  return content;
 }
 
 // ─── Unified Pipeline ───
@@ -169,10 +142,19 @@ export async function run(args) {
   const config = loadConfig();
   const env = getEnvConfig();
   const cliModel = args.includes('--model') ? args[args.indexOf('--model') + 1] : '';
-  const model = cliModel || config.review.model || env.model;
+  const ignoreConfigModelForBuiltinFallback = env.builtinFallback && !cliModel && !process.env.AI_REVIEW_MODEL;
+  const configModel = ignoreConfigModelForBuiltinFallback ? '' : config.review.model;
+  const model = cliModel || configModel || env.model;
+  const reviewTemperature = Number(config.review.temperature ?? 0.1);
+  const reviewMaxTokens = Number(config.review.maxTokens ?? 8192);
+  const fixTemperature = Number(config.fix.temperature ?? 0.2);
+  const fixMaxTokens = Number(config.fix.maxTokens ?? 8192);
+  const enableRules = config.review.enableRules !== false;
 
   if (!env.apiKey && env.provider !== 'ollama') { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
   if (env.builtinFallback) log('💡', t('builtinFallback'));
+  if (env.ignoredModelOverride) log('⚠️', t('builtinFallbackIgnoreModel', env.requestedModel));
+  if (ignoreConfigModelForBuiltinFallback && config.review.model) log('⚠️', t('builtinFallbackIgnoreConfigModel', config.review.model));
 
   await initProxy(env.proxy);
   setIgnorePatterns(config.ignore);
@@ -182,6 +164,7 @@ export async function run(args) {
   const full = args.includes('--full');
   const noCommit = args.includes('--no-commit');
   const noTest = args.includes('--no-test') || config.test.enabled === false;
+  const runTests = args.includes('--run-tests') || (!args.includes('--no-run-tests') && config.test.run !== false);
   const noReport = args.includes('--no-report');
   const jsonOutput = args.includes('--json');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
@@ -210,7 +193,7 @@ export async function run(args) {
 
   // ── Phase 1: Review (+ Fix loop if --fix) ──
   let round = 0;
-  let lastReview = { score: 0, red: 0, yellow: 0, green: 0, summary: '', issues: [], markdown: '' };
+  let lastReview = { score: 0, red: 0, yellow: 0, green: 0, blue: 0, summary: '', issues: [], markdown: '' };
   let prevScore = null;
   let passed = false;
   let reviewTokens = null;
@@ -242,42 +225,52 @@ export async function run(args) {
       if (!jsonOutput) log('📦', t('chunkReview', chunks.length));
 
       const chunkResults = [];
+      let totalPrompt = 0, totalCompletion = 0;
       for (let ci = 0; ci < chunks.length; ci++) {
         if (!jsonOutput) log('📝', t('chunkProgress', ci + 1, chunks.length));
         const chunkPrompt = buildPrompt(chunks[ci], lang);
         const useStream = !jsonOutput;
         if (useStream) process.stdout.write('\n');
-        const { content: chunkContent } = await callAI({
+        const { content: chunkContent, tokens: chunkTokens } = await callAI({
           baseUrl: env.baseUrl, apiKey: env.apiKey, model, systemPrompt, prompt: chunkPrompt,
-          provider: env.provider, stream: useStream,
+          provider: env.provider, temperature: reviewTemperature, maxTokens: reviewMaxTokens, stream: useStream,
           onToken: useStream ? (tok) => process.stdout.write(tok) : undefined,
         });
         if (useStream) process.stdout.write('\n');
-        chunkResults.push(parseReview(chunkContent));
+        const aiReview = parseReview(chunkContent);
+        const ruleReview = enableRules ? runRuleChecks(chunks[ci], lang) : null;
+        chunkResults.push(ruleReview ? mergeReviews([aiReview, ruleReview]) : aiReview);
+        if (chunkTokens) {
+          totalPrompt += chunkTokens.prompt_tokens || 0;
+          totalCompletion += chunkTokens.completion_tokens || 0;
+        }
       }
       lastReview = mergeReviews(chunkResults);
+      reviewTokens = { prompt_tokens: totalPrompt, completion_tokens: totalCompletion, total_tokens: totalPrompt + totalCompletion };
     } else {
       const prompt = buildPrompt(diff, lang);
       const useStream = !jsonOutput;
       if (useStream) process.stdout.write('\n');
       const { content, tokens } = await callAI({
         baseUrl: env.baseUrl, apiKey: env.apiKey, model, systemPrompt, prompt,
-        provider: env.provider, stream: useStream,
+        provider: env.provider, temperature: reviewTemperature, maxTokens: reviewMaxTokens, stream: useStream,
         onToken: useStream ? (tok) => process.stdout.write(tok) : undefined,
       });
       if (useStream) process.stdout.write('\n');
       reviewTokens = tokens;
-      lastReview = parseReview(content);
+      const aiReview = parseReview(content);
+      const ruleReview = enableRules ? runRuleChecks(diff, lang) : null;
+      lastReview = ruleReview ? mergeReviews([aiReview, ruleReview]) : aiReview;
     }
 
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
     if (!jsonOutput) {
       console.log();
-      let scoreText = t('score', lastReview.score, lastReview.red, lastReview.yellow, lastReview.green);
+      let scoreText = t('score', lastReview.score, lastReview.red, lastReview.yellow, lastReview.green, lastReview.blue || 0);
       if (prevScore !== null) {
-        const diff = lastReview.score - prevScore;
-        scoreText += diff > 0 ? ` (↑${diff})` : diff < 0 ? ` (↓${Math.abs(diff)})` : ' (→)';
+        const delta = lastReview.score - prevScore;
+        scoreText += delta > 0 ? ` (↑${delta})` : delta < 0 ? ` (↓${Math.abs(delta)})` : ' (→)';
       }
       log('📊', scoreText);
       log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${reviewTokens ? ` | ${t('tokens', reviewTokens.prompt_tokens, reviewTokens.completion_tokens, reviewTokens.total_tokens)}` : ''}`);
@@ -307,7 +300,7 @@ export async function run(args) {
       log('⚠️', t('fixSafetyNote'));
     }
 
-    const fixableIssues = lastReview.issues.filter((i) => i.severity !== 'green');
+    const fixableIssues = lastReview.issues.filter((i) => i.severity !== 'green' && i.severity !== 'blue');
     if (fixableIssues.length === 0) {
       if (!jsonOutput) log('✅', t('noFixNeeded'));
       passed = true;
@@ -320,6 +313,8 @@ export async function run(args) {
       env,
       model,
       safetyMinRatio: config.fix.safetyMinRatio,
+      temperature: fixTemperature,
+      maxTokens: fixMaxTokens,
     });
     allFixedFiles.push(...fixedFiles);
 
@@ -359,14 +354,41 @@ export async function run(args) {
   }
 
   // ── Phase 2: Test (always, unless --no-test) ──
-  let testResult = '';
+  let testResult = null;
   if (!noTest) {
     separator(`🧪 ${t('testTitle')}`);
     const files = getChangedFiles({ file, staged, full });
     if (files.length > 0) {
       log('📂', t('testTarget', files.join(', ')));
-      testResult = await generateTests({ files, env, model, config });
-      console.log('\n' + testResult);
+      const prepared = buildSourceFromFiles(files, { maxLinesPerFile: 200 });
+      if (prepared.sourceCode.trim()) {
+        testResult = await runAiTestPipeline({
+          sourceCode: prepared.sourceCode,
+          fileLabel: prepared.fileLabel,
+          targetFiles: prepared.files,
+          env,
+          model,
+          config,
+          lang,
+          runTests,
+        });
+        console.log('\n' + testResult.output);
+        console.log();
+        if (testResult.execution.attempted) {
+          log(testResult.execution.passed ? '✅' : '❌', t('testExecStatus', testResult.execution.passed ? t('testExecPassed') : t('testExecFailed')));
+          log('🧪', t('testExecRunner', testResult.execution.runner, testResult.execution.elapsedMs));
+          if (testResult.execution.tempFile) log('📄', t('testExecTempFile', testResult.execution.tempFile, testResult.execution.keptFile));
+          if (!testResult.execution.passed) {
+            if (testResult.execution.reason) log('⚠️', testResult.execution.reason);
+            if (testResult.execution.stdout) console.log(`\n[stdout]\n${testResult.execution.stdout}`);
+            if (testResult.execution.stderr) console.log(`\n[stderr]\n${testResult.execution.stderr}`);
+          }
+        } else {
+          log('ℹ️', t('testExecSkipped', testResult.execution.reason));
+        }
+      } else {
+        log('ℹ️', t('testNoFiles'));
+      }
     } else {
       log('ℹ️', t('testNoFiles'));
     }
@@ -374,6 +396,8 @@ export async function run(args) {
 
   // ── Phase 3: Report (always, unless --no-report) ──
   let reportPath = '';
+  const testPassed = !testResult?.execution?.attempted || testResult.execution.passed;
+  const pipelinePassed = passed && testPassed;
   if (!noReport) {
     const meta = {
       date: new Date().toLocaleString(),
@@ -382,7 +406,7 @@ export async function run(args) {
       extra: fixMode ? `Rounds: ${round}/${maxRounds}${passed ? ' ✅' : ' ⚠️'}` : '',
       threshold,
     };
-    reportPath = writeReport({ review: lastReview, meta, outputDir: config.report.outputDir, open: config.report.open });
+    reportPath = writeReport({ review: lastReview, meta, test: testResult, outputDir: config.report.outputDir, open: config.report.open });
     log('📄', t('reportGenerated', reportPath));
   }
 
@@ -403,18 +427,25 @@ export async function run(args) {
 
   // ── Final Summary ──
   separator('📋 Pipeline Report');
-  log(passed ? '✅' : '❌', passed ? t('resultPass') : t('resultFail'));
+  log(pipelinePassed ? '✅' : '❌', pipelinePassed ? t('resultPass') : t('resultFail'));
   log('📊', t('finalScore', lastReview.score));
   if (fixMode) log('🔄', t('finalRounds', round));
   log('👁️', t('mode', fixMode ? 'Fix' : 'Review'));
+  if (testResult?.execution?.attempted) {
+    log(testResult.execution.passed ? '✅' : '⚠️', t('testExecStatus', testResult.execution.passed ? t('testExecPassed') : t('testExecFailed')));
+  } else if (testResult?.execution?.reason) {
+    log('ℹ️', t('testExecSkipped', testResult.execution.reason));
+  }
   if (reportPath) log('📄', t('finalReport', reportPath));
 
   if (!fixMode && !passed) {
     log('💡', t('fixSuggest'));
   } else if (fixMode && !passed) {
     log('💡', t('manualSuggest'));
+  } else if (passed && !testPassed) {
+    log('💡', t('testExecFixSuggest'));
   }
 
-  // Exit: not passed → exit(1)
-  if (!passed) process.exit(1);
+  // Exit: review or real test execution failed → exit(1)
+  if (!pipelinePassed) process.exit(1);
 }

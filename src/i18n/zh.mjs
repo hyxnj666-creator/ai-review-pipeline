@@ -1,6 +1,8 @@
 export default {
   noApiKey: '缺少 API Key，请配置对应环境变量（支持 .env.local）:\n  OpenAI:   OPENAI_API_KEY\n  DeepSeek: DEEPSEEK_API_KEY\n  Claude:   ANTHROPIC_API_KEY\n  通义千问: DASHSCOPE_API_KEY\n  Gemini:   GEMINI_API_KEY\n  通用:     AI_REVIEW_API_KEY',
-  builtinFallback: '当前使用内置免费模型（Gemini），配置自己的 API Key 可获得更快更稳定的体验。',
+  builtinFallback: '当前使用内置免费模型（SiliconFlow），配置自己的 API Key 可获得更快更稳定的体验。',
+  builtinFallbackIgnoreModel: (m) => `未检测到可用 API Key，已回退到内置模型；忽略自定义模型配置：${m}`,
+  builtinFallbackIgnoreConfigModel: (m) => `当前使用内置模型，已忽略项目配置中的模型覆盖：${m}`,
   chunkReview: (n) => `Diff 过大，已拆分为 ${n} 个分片逐一审查`,
   chunkProgress: (i, n) => `审查分片 ${i}/${n}...`,
   noChanges: '没有检测到代码变更。',
@@ -14,7 +16,7 @@ export default {
   modeReview: 'Review（只读审查 + 测试 + 报告）',
   modeFix: 'Review + 自动修复 + 测试 + 报告',
   roundTitle: (n) => `第 ${n} 轮 Code Review`,
-  score: (s, r, y, g) => `质量评分: ${s}/100 | 🔴${r} 🟡${y} 🟢${g}`,
+  score: (s, r, y, g, b = 0) => `质量评分: ${s}/100 | 🔴${r} 🟡${y} 🟢${g} 🔵${b}`,
   passed: (s, t) => `质量达标（${s} ≥ ${t}），Review 通过！`,
   maxRoundsReached: (n) => `已达最大轮次 ${n}，跳出修复循环。`,
   fixRound: (n) => `第 ${n} 轮自动修复`,
@@ -27,9 +29,16 @@ export default {
   fixDiffTitle: '本轮修复内容（git diff）',
   noFixNeeded: '无需修复的问题。',
   nextRound: '进入下一轮 Review...',
-  testTitle: 'AI 测试用例生成',
+  testTitle: 'AI 测试生成与执行',
   testTarget: (f) => `目标文件: ${f}`,
   testNoFiles: '没有变更的代码文件，跳过测试生成。',
+  testExecStatus: (s) => `测试执行: ${s}`,
+  testExecPassed: '通过',
+  testExecFailed: '失败',
+  testExecRunner: (r, ms) => `执行器: ${r}（${(ms / 1000).toFixed(1)}s）`,
+  testExecTempFile: (f, kept) => `临时测试文件: ${f}${kept ? '（已保留用于排查）' : ''}`,
+  testExecSkipped: (reason) => `已跳过真实测试执行：${reason}`,
+  testExecFixSuggest: '真实测试执行失败。请修复生成出的测试或项目测试环境后重新运行。',
   reportGenerated: (p) => `报告已生成: ${p}`,
   commitTitle: '自动提交',
   commitDone: (m) => `已提交: ${m}`,
@@ -57,14 +66,14 @@ export default {
   helpText: `
 ai-review-pipeline — AI 驱动的代码质量流水线
 
-默认流程: Review（1 轮）→ 测试用例生成 → 报告
-加 --fix:  Review → 自动修复 → 循环直到通过或 maxRounds → 测试 → 报告
+默认流程: Review（1 轮）→ AI 测试生成 → 真实测试执行 → 报告
+加 --fix:  Review → 自动修复 → 循环直到通过或 maxRounds → AI 测试生成 → 真实测试执行 → 报告
 
 命令:
   (默认)    Review + 测试 + 报告（只读，不修改代码）
   review    同上（别名）
   fix       等价于 --fix（Review + 自动修复 + 测试 + 报告）
-  test      独立 AI 测试用例生成
+  test      独立 AI 测试生成 + 真实执行
   init      初始化配置文件（.ai-pipeline.json）
 
 核心参数:
@@ -80,19 +89,22 @@ Review 参数:
   --branch <base>     对比分支（如 main）
   --json              JSON 输出（CI 用）
   --no-report         不生成 HTML 报告
+  --no-run-tests      生成测试但跳过真实执行
 
 Fix 参数:
   --threshold <n>     质量阈值（默认 95）
   --max-rounds <n>    最大修复轮次（默认 5）
   --no-commit         修复后不自动提交
-  --no-test           跳过测试用例生成
+  --no-test           跳过 AI 测试生成和真实测试执行
   --skip <levels>     跳过修复级别（如 green,yellow）
 
 test 参数:
   --staged            为 staged 文件生成测试
+  --no-run-tests      生成测试但跳过真实执行
 
 Exit Code:
   0   Review 通过（无 red 问题且分数达标）
+  1   Review 通过但真实测试执行失败
   1   Review 未通过（有 red 问题，或 --fix 后仍未达标）
 
 --file 与 --full 的区别:
@@ -105,6 +117,7 @@ Exit Code:
   claude      Anthropic Claude      ANTHROPIC_API_KEY
   qwen        通义千问              DASHSCOPE_API_KEY
   gemini      Google Gemini         GEMINI_API_KEY
+  siliconflow 硅基流动              SILICONFLOW_API_KEY
   ollama      本地 Ollama           无需 Key
   custom      自定义 OpenAI 兼容    AI_REVIEW_API_KEY + AI_REVIEW_BASE_URL
 

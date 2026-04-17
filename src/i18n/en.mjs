@@ -1,6 +1,8 @@
 export default {
   noApiKey: 'Missing API Key. Set one of the following in .env.local or environment:\n  OpenAI:   OPENAI_API_KEY\n  DeepSeek: DEEPSEEK_API_KEY\n  Claude:   ANTHROPIC_API_KEY\n  Qwen:     DASHSCOPE_API_KEY\n  Gemini:   GEMINI_API_KEY\n  Generic:  AI_REVIEW_API_KEY',
-  builtinFallback: 'Using built-in free model (Gemini). Configure your own API Key for faster and more stable experience.',
+  builtinFallback: 'Using built-in free model (SiliconFlow). Configure your own API Key for faster and more stable experience.',
+  builtinFallbackIgnoreModel: (m) => `No usable API key detected, falling back to the built-in model; ignoring custom model override: ${m}`,
+  builtinFallbackIgnoreConfigModel: (m) => `Using the built-in fallback model; ignoring project-level model override: ${m}`,
   chunkReview: (n) => `Diff too large, split into ${n} chunks for review`,
   chunkProgress: (i, n) => `Reviewing chunk ${i}/${n}...`,
   noChanges: 'No code changes detected.',
@@ -14,7 +16,7 @@ export default {
   modeReview: 'Review (read-only audit + test + report)',
   modeFix: 'Review + Auto-fix + Test + Report',
   roundTitle: (n) => `Round ${n} Code Review`,
-  score: (s, r, y, g) => `Score: ${s}/100 | 🔴${r} 🟡${y} 🟢${g}`,
+  score: (s, r, y, g, b = 0) => `Score: ${s}/100 | 🔴${r} 🟡${y} 🟢${g} 🔵${b}`,
   passed: (s, t) => `Quality passed (${s} >= ${t}). Review passed!`,
   maxRoundsReached: (n) => `Reached max rounds ${n}, exiting fix loop.`,
   fixRound: (n) => `Round ${n} Auto-fix`,
@@ -27,9 +29,16 @@ export default {
   fixDiffTitle: 'Changes from this round (git diff)',
   noFixNeeded: 'No issues to fix.',
   nextRound: 'Starting next review round...',
-  testTitle: 'AI Test Case Generation',
+  testTitle: 'AI Test Generation & Execution',
   testTarget: (f) => `Target files: ${f}`,
   testNoFiles: 'No changed code files, skipping test generation.',
+  testExecStatus: (s) => `Test execution: ${s}`,
+  testExecPassed: 'PASS',
+  testExecFailed: 'FAILED',
+  testExecRunner: (r, ms) => `Runner: ${r} (${(ms / 1000).toFixed(1)}s)`,
+  testExecTempFile: (f, kept) => `Temp test file: ${f}${kept ? ' (kept for debugging)' : ''}`,
+  testExecSkipped: (reason) => `Skipped real test execution: ${reason}`,
+  testExecFixSuggest: 'Real test execution failed. Fix the generated or project test environment and re-run.',
   reportGenerated: (p) => `Report generated: ${p}`,
   commitTitle: 'Auto Commit',
   commitDone: (m) => `Committed: ${m}`,
@@ -57,14 +66,14 @@ export default {
   helpText: `
 ai-review-pipeline — AI-powered code quality pipeline
 
-Default: Review (1 round) → Test generation → Report
---fix:   Review → Auto-fix → Loop until pass or maxRounds → Test → Report
+Default: Review (1 round) → AI test generation → Real test execution → Report
+--fix:   Review → Auto-fix → Loop until pass or maxRounds → AI test generation → Real test execution → Report
 
 Commands:
   (default)   Review + Test + Report (read-only, no code changes)
   review      Same as default (alias)
   fix         Equivalent to --fix (Review + Auto-fix + Test + Report)
-  test        Standalone AI test case generation
+  test        Standalone AI test generation + real execution
   init        Initialize config file (.ai-pipeline.json)
 
 Core options:
@@ -80,19 +89,22 @@ Review options:
   --branch <base>     Compare branch (e.g. main)
   --json              JSON output (for CI)
   --no-report         Skip HTML report
+  --no-run-tests      Generate tests but skip real test execution
 
 Fix options:
   --threshold <n>     Quality threshold (default: 95)
   --max-rounds <n>    Max fix rounds (default: 5)
   --no-commit         Don't auto-commit after fix
-  --no-test           Skip test case generation
+  --no-test           Skip AI test generation and real test execution
   --skip <levels>     Skip fix levels (e.g. green,yellow)
 
 test options:
   --staged            Generate tests for staged files
+  --no-run-tests      Generate tests but skip real test execution
 
 Exit codes:
   0   Review passed (no red issues and score meets threshold)
+  1   Review passed but real test execution failed
   1   Review failed (red issues found, or --fix didn't resolve all issues)
 
 --file vs --full:
@@ -105,6 +117,7 @@ Supported AI Providers:
   claude      Anthropic Claude      ANTHROPIC_API_KEY
   qwen        Alibaba Qwen          DASHSCOPE_API_KEY
   gemini      Google Gemini         GEMINI_API_KEY
+  siliconflow SiliconFlow           SILICONFLOW_API_KEY
   ollama      Local Ollama          No key needed
   custom      OpenAI-compatible     AI_REVIEW_API_KEY + AI_REVIEW_BASE_URL
 

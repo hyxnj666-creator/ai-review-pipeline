@@ -1,57 +1,68 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, extname } from 'node:path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { resolve, relative } from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadEnv } from '../core/env.mjs';
 import { loadConfig, getEnvConfig } from '../core/config.mjs';
-import { initProxy, callAI } from '../core/ai-client.mjs';
-import { log, separator, t, createSpinner } from '../core/logger.mjs';
+import { initProxy } from '../core/ai-client.mjs';
+import { log, separator, t, createSpinner, getLang } from '../core/logger.mjs';
+import { collectCodeFiles, detectStack, runAiTestPipeline } from '../core/test-executor.mjs';
 
-function detectStack(code, file) {
-  const ext = extname(file).toLowerCase();
-  if (ext === '.py') return 'Python (pytest)';
-  if (ext === '.vue') return 'Vue3 (Vitest)';
-  if (code.includes('from react') || code.includes("from 'react")) return 'React (Vitest/Jest)';
-  if (ext === '.tsx' || ext === '.jsx') return 'React (Vitest)';
-  if (ext === '.go') return 'Go (testing)';
-  if (ext === '.rs') return 'Rust (cargo test)';
-  if (ext === '.java') return 'Java (JUnit)';
-  return 'TypeScript (Vitest)';
-}
+const CODE_EXT = /\.(ts|tsx|vue|js|jsx|py|mjs|cjs|go|rs|java|kt|swift|rb|php|cs|uvue)$/;
 
 export async function run(args) {
   loadEnv();
   const config = loadConfig();
   const env = getEnvConfig();
   const cliModel = args.includes('--model') ? args[args.indexOf('--model') + 1] : '';
-  const model = cliModel || config.review.model || env.model;
+  const ignoreConfigModelForBuiltinFallback = env.builtinFallback && !cliModel && !process.env.AI_REVIEW_MODEL;
+  const configModel = ignoreConfigModelForBuiltinFallback ? '' : config.review.model;
+  const model = cliModel || configModel || env.model;
 
   if (!env.apiKey && env.provider !== 'ollama') { console.error(`❌ ${t('noApiKey')}`); process.exit(1); }
   if (env.builtinFallback) log('💡', t('builtinFallback'));
+  if (env.ignoredModelOverride) log('⚠️', t('builtinFallbackIgnoreModel', env.requestedModel));
+  if (ignoreConfigModelForBuiltinFallback && config.review.model) log('⚠️', t('builtinFallbackIgnoreConfigModel', config.review.model));
 
   await initProxy(env.proxy);
 
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
   const staged = args.includes('--staged');
+  const runTests = args.includes('--run-tests') || (!args.includes('--no-run-tests') && config.test.run !== false);
 
   let sourceCode = '';
   let fileName = '';
+  let targetFiles = [];
 
   if (file) {
     const fullPath = resolve(process.cwd(), file);
     if (!existsSync(fullPath)) { console.error(`❌ File not found: ${file}`); process.exit(1); }
-    sourceCode = readFileSync(fullPath, 'utf-8');
-    fileName = file;
-  } else if (staged) {
-    try {
-      const files = execSync('git diff --cached --name-only --diff-filter=ACMR', { encoding: 'utf-8' })
-        .trim().split('\n').filter(Boolean)
-        .filter((f) => /\.(ts|tsx|vue|js|jsx|py|go|rs|java)$/.test(f));
+    const stat = statSync(fullPath);
+    if (stat.isDirectory()) {
+      const files = collectCodeFiles(fullPath).map((f) => relative(process.cwd(), f));
       if (files.length === 0) { console.log(`✅ ${t('testNoFiles')}`); process.exit(0); }
       sourceCode = files.map((f) => {
         try { return `// ===== ${f} =====\n${readFileSync(resolve(process.cwd(), f), 'utf-8')}`; }
         catch { return ''; }
       }).filter(Boolean).join('\n\n');
       fileName = files.join(', ');
+      targetFiles = files;
+    } else {
+      sourceCode = readFileSync(fullPath, 'utf-8');
+      fileName = file;
+      targetFiles = [file];
+    }
+  } else if (staged) {
+    try {
+      const files = execSync('git diff --cached --name-only --diff-filter=ACMR', { encoding: 'utf-8' })
+        .trim().split('\n').filter(Boolean)
+        .filter((f) => CODE_EXT.test(f));
+      if (files.length === 0) { console.log(`✅ ${t('testNoFiles')}`); process.exit(0); }
+      sourceCode = files.map((f) => {
+        try { return `// ===== ${f} =====\n${readFileSync(resolve(process.cwd(), f), 'utf-8')}`; }
+        catch { return ''; }
+      }).filter(Boolean).join('\n\n');
+      fileName = files.join(', ');
+      targetFiles = files;
     } catch { console.error('❌ Failed to get staged files'); process.exit(1); }
   } else {
     console.error('Usage: ai-rp test --file <path> or --staged');
@@ -66,7 +77,6 @@ export async function run(args) {
   }
 
   const stack = config.test.stack !== 'auto' ? config.test.stack : detectStack(sourceCode, fileName);
-  const maxCases = config.test.maxCases || 8;
 
   log('📝', t('testTarget', fileName));
   log('🔧', t('testDetectStack', stack));
@@ -74,52 +84,45 @@ export async function run(args) {
   console.log();
   log('⏳', t('testGenerating'));
 
-  const prompt = `你是一个资深测试工程师。请根据以下代码，生成覆盖完整的测试用例。技术栈: ${stack}。
-
-## 测试用例分三类
-
-### 1. ✅ 功能用例（验证业务正确性）
-正常业务流程：CRUD 操作、状态流转、数据变换、组件渲染、API 调用是否返回预期结果。
-
-### 2. ⚔️ 对抗用例（验证安全与健壮性）
-恶意或异常输入：XSS 注入、SQL 注入、超长字符串、非法字符、并发重复提交、越权访问。
-
-### 3. 🔲 边界用例（验证边界条件）
-边界值与极端场景：空值/null/undefined、空数组/空对象、数值 0/负数/MAX_SAFE_INTEGER、分页首页和末页、网络超时/断网。
-
-## 输出格式
-
-每条用例：
-\`\`\`
-[类型] 用例名称
-  输入: 具体输入数据
-  操作: 具体操作步骤
-  预期: 预期结果
-\`\`\`
-
-最后输出 ${maxCases} 个关键用例的**可运行测试代码**（${stack} 风格）。
-
-## 源代码
-
-文件: ${fileName}
-
-\`\`\`
-${sourceCode}
-\`\`\``;
-
   const spinner = createSpinner(t('testGenerating'));
   spinner.start();
   const t0 = Date.now();
-  const { content, tokens } = await callAI({ baseUrl: env.baseUrl, apiKey: env.apiKey, model, prompt, temperature: 0.4, provider: env.provider });
+  const result = await runAiTestPipeline({
+    sourceCode,
+    fileLabel: fileName,
+    targetFiles,
+    env,
+    model,
+    config,
+    lang: getLang(),
+    runTests,
+  });
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   spinner.stop();
 
   separator(t('testTitle'));
-  console.log(content);
+  console.log(result.output);
+  console.log();
+
+  if (result.execution.attempted) {
+    log(result.execution.passed ? '✅' : '❌', t('testExecStatus', result.execution.passed ? t('testExecPassed') : t('testExecFailed')));
+    log('🧪', t('testExecRunner', result.execution.runner, result.execution.elapsedMs));
+    if (result.execution.tempFile) log('📄', t('testExecTempFile', result.execution.tempFile, result.execution.keptFile));
+    if (!result.execution.passed) {
+      if (result.execution.reason) log('⚠️', result.execution.reason);
+      if (result.execution.stdout) console.log(`\n[stdout]\n${result.execution.stdout}`);
+      if (result.execution.stderr) console.log(`\n[stderr]\n${result.execution.stderr}`);
+    }
+  } else {
+    log('ℹ️', t('testExecSkipped', result.execution.reason));
+  }
+
   console.log();
   console.log('─'.repeat(60));
-  log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${tokens ? ` | ${t('tokens', tokens.prompt_tokens, tokens.completion_tokens, tokens.total_tokens)}` : ''}`);
+  log('⏱️', `${t('model', model)} | ${t('reviewTime', elapsed)}${result.tokens ? ` | ${t('tokens', result.tokens.prompt_tokens, result.tokens.completion_tokens, result.tokens.total_tokens)}` : ''}`);
   console.log('═'.repeat(60));
+
+  if (result.execution.attempted && !result.execution.passed) process.exit(1);
 }
 
 export { detectStack };

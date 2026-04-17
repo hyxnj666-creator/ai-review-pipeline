@@ -1,49 +1,249 @@
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 
-function escHtml(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-export function generateHTML(review, meta) {
+const HL_KEYWORDS = new Set([
+  'const','let','var','function','return','if','else','for','while','do','switch','case','break',
+  'continue','new','delete','typeof','instanceof','in','of','class','extends','super','this',
+  'import','export','from','default','async','await','try','catch','finally','throw',
+  'true','false','null','undefined','void','yield','static','get','set',
+  'def','self','elif','None','True','False','print','raise','with','as','lambda','pass',
+  'interface','type','enum','implements','abstract','private','public','protected','readonly',
+]);
+
+function highlightCode(raw) {
+  const TOKEN_RE = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|(?<=^|[\s;{(])#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d+\.?\d*\b)|(\b[A-Za-z_$]\w*\b)/g;
+  let result = '';
+  let last = 0;
+  let m;
+  while ((m = TOKEN_RE.exec(raw)) !== null) {
+    if (m.index > last) result += escHtml(raw.slice(last, m.index));
+    const [match, comment, str, num, word] = m;
+    if (comment) result += `<span class="hl-c">${escHtml(comment)}</span>`;
+    else if (str) result += `<span class="hl-s">${escHtml(str)}</span>`;
+    else if (num) result += `<span class="hl-n">${escHtml(num)}</span>`;
+    else if (word && HL_KEYWORDS.has(word)) result += `<span class="hl-k">${escHtml(word)}</span>`;
+    else result += escHtml(match);
+    last = m.index + match.length;
+  }
+  if (last < raw.length) result += escHtml(raw.slice(last));
+  return result;
+}
+
+function getCodeSnippetHTML(file, line, contextLines = 5) {
+  if (!file || !line) return '';
+  try {
+    const fullPath = resolve(process.cwd(), file);
+    const content = readFileSync(fullPath, 'utf-8');
+    const lines = content.split('\n');
+    const start = Math.max(0, line - contextLines - 1);
+    const end = Math.min(lines.length, line + contextLines);
+    return lines.slice(start, end).map((l, idx) => {
+      const num = start + idx + 1;
+      const isTarget = num === line;
+      const numStr = String(num).padStart(4);
+      const highlighted = highlightCode(l);
+      const cls = isTarget ? ' class="hl-target"' : '';
+      return `<span${cls}><span class="hl-ln">${numStr}</span> │ ${highlighted}</span>`;
+    }).join('\n');
+  } catch { return ''; }
+}
+
+function groupIssuesByFile(issues) {
+  const map = new Map();
+  for (const issue of issues) {
+    const key = issue.file || '(unknown)';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(issue);
+  }
+  return map;
+}
+
+const SEVERITY_META = {
+  red:    { order: 0, icon: '🔴', color: '#ef4444', title: 'Critical Issues', desc: 'Blocking problems that should be fixed before merge.' },
+  yellow: { order: 1, icon: '🟡', color: '#eab308', title: 'Warnings', desc: 'Meaningful risks or missing guards that should be addressed.' },
+  green:  { order: 2, icon: '🟢', color: '#22c55e', title: 'Improvements', desc: 'Minor but real quality issues that affect maintainability.' },
+  blue:   { order: 3, icon: '🔵', color: '#38bdf8', title: 'Suggestions', desc: 'Nice-to-have suggestions that do not affect score.' },
+};
+
+function renderLogBlock(title, content) {
+  if (!content) return '';
+  return `<details class="code-detail"><summary class="code-toggle">▶ ${title}</summary><pre class="code-block">${escHtml(content)}</pre></details>`;
+}
+
+function buildTestHTML(test) {
+  if (!test) return '';
+
+  const execution = test.execution || {};
+  const statusText = execution.attempted
+    ? (execution.passed ? 'PASS' : 'FAILED')
+    : 'SKIPPED';
+  const statusClass = execution.attempted
+    ? (execution.passed ? 'bp' : 'bf')
+    : 'bb';
+
+  return `<div class="sec">
+  <h2>Test Execution</h2>
+  <div class="test-card">
+    <div class="test-row">
+      <span class="b ${statusClass}">${statusText}</span>
+      ${test.stack ? `<span class="b bb">${escHtml(test.stack)}</span>` : ''}
+      ${execution.runner ? `<span class="b by">Runner: ${escHtml(execution.runner)}</span>` : ''}
+    </div>
+    ${execution.reason ? `<div class="test-note">${escHtml(execution.reason)}</div>` : ''}
+    <div class="test-meta-grid">
+      <div class="summary-card">
+        <div class="k">Generated Temp File</div>
+        <div class="test-meta-value">${execution.tempFile ? `<code>${escHtml(execution.tempFile)}</code>` : '—'}</div>
+        <div class="d">${execution.keptFile ? 'Kept for debugging because execution failed.' : 'Removed automatically after successful execution.'}</div>
+      </div>
+      <div class="summary-card">
+        <div class="k">Command</div>
+        <div class="test-meta-value">${execution.command ? `<code>${escHtml(execution.command)}</code>` : '—'}</div>
+        <div class="d">${typeof execution.exitCode === 'number' ? `Exit code: ${execution.exitCode}` : 'No process executed.'}</div>
+      </div>
+      <div class="summary-card">
+        <div class="k">Generation</div>
+        <div class="test-meta-value">${test.tokens?.total_tokens || 0} tokens</div>
+        <div class="d">${execution.elapsedMs ? `Execution time: ${(execution.elapsedMs / 1000).toFixed(1)}s` : 'No execution time recorded.'}</div>
+      </div>
+    </div>
+    ${renderLogBlock('Generated AI Output', test.output || '')}
+    ${renderLogBlock('stdout', execution.stdout || '')}
+    ${renderLogBlock('stderr', execution.stderr || '')}
+  </div>
+</div>`;
+}
+
+export function generateHTML(review, meta, test) {
   const sc = review.score >= 95 ? '#22c55e' : review.score >= 80 ? '#eab308' : '#ef4444';
-  const rows = (review.issues || []).map((i) => {
-    const c = i.severity === 'red' ? '#ef4444' : i.severity === 'yellow' ? '#eab308' : '#22c55e';
-    const icon = i.severity === 'red' ? '🔴' : i.severity === 'yellow' ? '🟡' : '🟢';
-    return `<tr>
-      <td style="color:${c};font-weight:600;white-space:nowrap">${icon} ${i.severity.toUpperCase()}</td>
-      <td><code>${escHtml(i.file) || '-'}</code>${i.line ? `:${i.line}` : ''}</td>
-      <td><strong>${escHtml(i.title)}</strong><br><span style="color:#94a3b8">${escHtml(i.desc)}</span></td>
-      <td><code style="font-size:12px">${escHtml(i.fix)}</code></td>
-    </tr>`;
-  }).join('');
+  const issues = review.issues || [];
+  const threshold = meta.threshold || 95;
+  const testsPassed = !test?.execution?.attempted || test.execution.passed;
+  const overallPassed = review.score >= threshold && testsPassed;
+  const blockingCount = review.red || 0;
+  const nonBlockingCount = (review.yellow || 0) + (review.green || 0);
+  const suggestionCount = review.blue || 0;
+  const testHTML = buildTestHTML(test);
+
+  let issuesHTML = '';
+  if (issues.length === 0) {
+    issuesHTML = '<div style="text-align:center;padding:32px;color:#22c55e;font-size:16px">✅ No issues found</div>';
+  } else {
+    const severitySections = Object.entries(SEVERITY_META)
+      .map(([severity, metaInfo]) => {
+        const severityIssues = issues.filter((issue) => issue.severity === severity);
+        if (severityIssues.length === 0) return '';
+        const fileGroups = groupIssuesByFile(severityIssues);
+        const fileBlocks = [];
+
+        for (const [file, fileIssues] of fileGroups) {
+          const issueCards = fileIssues.map((i) => {
+            let snippetHTML = '';
+            if (i.code) {
+              const highlighted = i.code.split('\n').map((l) => highlightCode(l)).join('\n');
+              snippetHTML = `<details class="code-detail" open><summary class="code-toggle">▶ Problematic code</summary><pre class="code-block">${highlighted}</pre></details>`;
+            } else {
+              const fallback = getCodeSnippetHTML(i.file, i.line);
+              if (fallback) {
+                snippetHTML = `<details class="code-detail"><summary class="code-toggle">▶ Code context (~L${i.line})</summary><pre class="code-block">${fallback}</pre></details>`;
+              }
+            }
+
+            return `<div class="issue-card" style="border-left:3px solid ${metaInfo.color}">
+  <div class="issue-header">
+    <span style="color:${metaInfo.color};font-weight:600">${metaInfo.icon} ${escHtml(i.title)}</span>
+    ${i.line ? `<span class="line-badge">~L${i.line}</span>` : ''}
+  </div>
+  <div class="issue-desc">${escHtml(i.desc)}</div>
+  <div class="issue-fix"><strong>Fix:</strong> ${escHtml(i.fix)}</div>
+  ${snippetHTML}
+</div>`;
+          }).join('\n');
+
+          fileBlocks.push(`<div class="file-group">
+  <div class="file-header"><code class="file-path">${escHtml(file)}</code> <span class="issue-count">${fileIssues.length} issue${fileIssues.length > 1 ? 's' : ''}</span></div>
+  ${issueCards}
+</div>`);
+        }
+
+        return `<div class="severity-section">
+  <div class="severity-heading">
+    <div>
+      <h3 style="color:${metaInfo.color}">${metaInfo.icon} ${metaInfo.title}</h3>
+      <p>${metaInfo.desc}</p>
+    </div>
+    <span class="severity-count" style="border-color:${metaInfo.color}40;color:${metaInfo.color};background:${metaInfo.color}15">${severityIssues.length}</span>
+  </div>
+  ${fileBlocks.join('\n')}
+</div>`;
+      })
+      .filter(Boolean);
+
+    issuesHTML = severitySections.join('\n');
+  }
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI Review Report — ${meta.date}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;max-width:960px;margin:0 auto}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;max-width:1000px;margin:0 auto}
 h1{font-size:20px;color:#22d3ee;margin-bottom:4px}
 .meta{color:#64748b;font-size:13px;margin-bottom:24px}
 .sc{display:flex;align-items:center;gap:24px;background:#1e293b;border-radius:16px;padding:24px;margin-bottom:24px;border:1px solid #334155}
 .ring{width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;border:4px solid ${sc};color:${sc};flex-shrink:0}
 .detail{flex:1}.detail .sum{font-size:15px;margin-bottom:8px}
 .badges{display:flex;gap:8px;flex-wrap:wrap}
-.b{padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600}
+.b{padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-block}
 .br{background:#ef444420;color:#ef4444;border:1px solid #ef444440}
 .by{background:#eab30820;color:#eab308;border:1px solid #eab30840}
 .bg{background:#22c55e20;color:#22c55e;border:1px solid #22c55e40}
+.bb{background:#38bdf820;color:#38bdf8;border:1px solid #38bdf840}
 .bp{background:#22c55e20;color:#22c55e;border:1px solid #22c55e40;font-size:14px;padding:6px 14px}
 .bf{background:#ef444420;color:#ef4444;border:1px solid #ef444440;font-size:14px;padding:6px 14px}
-table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
-th{text-align:left;padding:8px 12px;background:#1e293b;color:#94a3b8;border-bottom:1px solid #334155;font-weight:600;font-size:12px;text-transform:uppercase}
-td{padding:10px 12px;border-bottom:1px solid #1e293b;vertical-align:top}
-tr:hover{background:#1e293b40}
-code{background:#0f172a;padding:2px 6px;border-radius:4px;font-size:12px;word-break:break-all}
-.sec{margin-top:24px}.sec h2{font-size:15px;color:#94a3b8;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #1e293b}
+.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+.summary-card{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:12px 14px}
+.summary-card .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.summary-card .v{font-size:22px;font-weight:700;line-height:1}
+.summary-card .d{font-size:12px;color:#94a3b8;margin-top:6px}
+.test-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px}
+.test-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.test-note{font-size:13px;color:#fbbf24;margin-bottom:10px}
+.test-meta-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.test-meta-value{font-size:13px;color:#e2e8f0;word-break:break-word}
+.sec{margin-top:24px}.sec h2{font-size:15px;color:#94a3b8;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #1e293b}
+.severity-section{margin-bottom:24px}
+.severity-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}
+.severity-heading h3{font-size:16px;margin-bottom:4px}
+.severity-heading p{font-size:12px;color:#64748b}
+.severity-count{min-width:36px;height:28px;padding:0 10px;border-radius:999px;border:1px solid #334155;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+.file-group{margin-bottom:20px;background:#1e293b;border-radius:12px;border:1px solid #334155;overflow:hidden}
+.file-header{padding:12px 16px;background:#1e293b;border-bottom:1px solid #334155;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.file-path{background:#0f172a;padding:3px 8px;border-radius:4px;font-size:13px;color:#22d3ee}
+.issue-count{color:#64748b;font-size:12px;margin-left:auto}
+.issue-card{padding:12px 16px;border-bottom:1px solid #0f172a20;margin:0}
+.issue-card:last-child{border-bottom:none}
+.issue-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.line-badge{background:#334155;color:#94a3b8;padding:1px 6px;border-radius:4px;font-size:11px;font-family:monospace}
+.issue-desc{color:#94a3b8;font-size:13px;margin-bottom:6px}
+.issue-fix{font-size:13px;color:#a5b4fc;margin-bottom:6px}
+.code-detail{margin-top:6px}
+.code-toggle{cursor:pointer;font-size:12px;color:#64748b;padding:4px 0;user-select:none}
+.code-toggle:hover{color:#94a3b8}
+.code-block{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px 14px;font-size:12px;line-height:1.6;overflow-x:auto;color:#cbd5e1;margin-top:6px;white-space:pre;font-family:'Fira Code','JetBrains Mono',Consolas,'Courier New',monospace}
+.hl-target{background:#ef444418;display:inline-block;width:100%;border-left:2px solid #ef4444;padding-left:4px;margin-left:-6px}
+.hl-ln{color:#475569;user-select:none}
+.hl-k{color:#c084fc}
+.hl-s{color:#86efac}
+.hl-n{color:#fbbf24}
+.hl-c{color:#64748b;font-style:italic}
 .ft{margin-top:32px;padding-top:16px;border-top:1px solid #1e293b;color:#475569;font-size:12px;text-align:center}
+@media (max-width: 700px){.summary-grid,.test-meta-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -54,30 +254,47 @@ code{background:#0f172a;padding:2px 6px;border-radius:4px;font-size:12px;word-br
   <div class="detail">
     <div class="sum">${escHtml(review.summary) || '—'}</div>
     <div class="badges">
-      <span class="${review.score >= (meta.threshold || 95) ? 'b bp' : 'b bf'}">${review.score >= (meta.threshold || 95) ? '✅ PASS' : '❌ BLOCKED'}</span>
+      <span class="${overallPassed ? 'b bp' : 'b bf'}">${overallPassed ? '✅ PASS' : '❌ BLOCKED'}</span>
       ${review.red ? `<span class="b br">🔴 ${review.red} Critical</span>` : ''}
       ${review.yellow ? `<span class="b by">🟡 ${review.yellow} Warning</span>` : ''}
-      ${review.green ? `<span class="b bg">🟢 ${review.green} Info</span>` : ''}
+      ${review.green ? `<span class="b bg">🟢 ${review.green} Improvement</span>` : ''}
+      ${review.blue ? `<span class="b bb">🔵 ${review.blue} Suggestion</span>` : ''}
+    </div>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="k">Blocking Issues</div>
+        <div class="v" style="color:${blockingCount ? '#ef4444' : '#22c55e'}">${blockingCount}</div>
+        <div class="d">${blockingCount ? 'Critical problems that can block merge.' : 'No blocking issues detected.'}</div>
+      </div>
+      <div class="summary-card">
+        <div class="k">Non-blocking Issues</div>
+        <div class="v" style="color:${nonBlockingCount ? '#eab308' : '#22c55e'}">${nonBlockingCount}</div>
+        <div class="d">Warnings and improvements worth tracking.</div>
+      </div>
+      <div class="summary-card">
+        <div class="k">Suggestions</div>
+        <div class="v" style="color:${suggestionCount ? '#38bdf8' : '#94a3b8'}">${suggestionCount}</div>
+        <div class="d">Nice-to-have ideas that do not affect score.</div>
+      </div>
     </div>
   </div>
 </div>
+${testHTML}
 <div class="sec">
-  <h2>Issues (${(review.issues || []).length})</h2>
-  ${(review.issues || []).length === 0
-    ? '<div style="text-align:center;padding:32px;color:#22c55e;font-size:16px">✅ No issues found</div>'
-    : `<table><thead><tr><th>Level</th><th>File</th><th>Issue</th><th>Fix</th></tr></thead><tbody>${rows}</tbody></table>`}
+  <h2>Issues (${issues.length}) — grouped by severity</h2>
+  ${issuesHTML}
 </div>
 <div class="ft">Generated by ai-review-pipeline · Model: ${meta.model} · ⚠️ AI Review does not replace human Code Review</div>
 </body></html>`;
 }
 
-export function writeReport({ review, meta, outputDir, open }) {
+export function writeReport({ review, meta, test, outputDir, open }) {
   const outDir = resolve(process.cwd(), outputDir);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const prefix = meta.mode === 'fix' ? 'fix' : 'review';
   const reportPath = resolve(outDir, `${prefix}-${ts}.html`);
-  writeFileSync(reportPath, generateHTML(review, meta), 'utf-8');
+  writeFileSync(reportPath, generateHTML(review, meta, test), 'utf-8');
 
   if (open) {
     try {

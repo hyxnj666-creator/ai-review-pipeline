@@ -1,15 +1,41 @@
-const _BK = 'QUl6YVN5Q3JBZ1dsNXd1eTEzY3h3QnVZanFwdzNyalQzOWJzc3NV';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+const _BK = 'c2stZGhxdGN2dXl4ZHR1bm5lZ3RmbGdranlob2hhY2tiamt3dmxtbmR1aHlyb2FuZHZs';
 export const BUILTIN_KEY = atob(_BK);
-export const BUILTIN_PROVIDER = 'gemini';
+export const BUILTIN_PROVIDER = 'siliconflow';
 
 let fetchImpl = globalThis.fetch;
 let proxyInited = false;
+const requireFromHere = createRequire(import.meta.url);
+
+async function loadHttpsProxyAgent() {
+  const candidates = [];
+  try {
+    candidates.push(requireFromHere.resolve('https-proxy-agent', { paths: [process.cwd()] }));
+  } catch { /* ignore */ }
+  try {
+    candidates.push(requireFromHere.resolve('https-proxy-agent'));
+  } catch { /* ignore */ }
+
+  for (const resolved of [...new Set(candidates)]) {
+    try {
+      const mod = await import(pathToFileURL(resolved).href);
+      if (mod?.HttpsProxyAgent) return mod.HttpsProxyAgent;
+      if (mod?.default?.HttpsProxyAgent) return mod.default.HttpsProxyAgent;
+      if (typeof mod?.default === 'function') return mod.default;
+    } catch { /* try next candidate */ }
+  }
+
+  return null;
+}
 
 export async function initProxy(proxyUrl) {
   if (proxyInited || !proxyUrl) return;
   proxyInited = true;
   try {
-    const { HttpsProxyAgent } = await import('https-proxy-agent');
+    const HttpsProxyAgent = await loadHttpsProxyAgent();
+    if (!HttpsProxyAgent) return;
     const agent = new HttpsProxyAgent(proxyUrl);
     const orig = globalThis.fetch;
     fetchImpl = (u, o) => orig(u, { ...o, agent });
@@ -23,7 +49,7 @@ const PROVIDERS = {
   claude:      { baseUrl: 'https://api.anthropic.com',         defaultModel: 'claude-sonnet-4-20250514' },
   qwen:        { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
   gemini:      { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.0-flash' },
-  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'Qwen/Qwen2.5-Coder-7B-Instruct' },
+  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'Qwen/Qwen2.5-Coder-32B-Instruct' },
 };
 
 export function resolveProvider(env) {
@@ -56,7 +82,10 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
 
   const shouldStream = stream && onToken;
   const body = { model, messages, temperature, max_tokens: maxTokens };
-  if (shouldStream) body.stream = true;
+  if (shouldStream) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  }
   if (responseFormat && !shouldStream) body.response_format = responseFormat;
 
   const resp = await fetchImpl(url, {
@@ -71,6 +100,7 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
 
   if (shouldStream) {
     let full = '';
+    let streamUsage = null;
     const reader = resp.body?.getReader?.();
     if (!reader) {
       const data = await resp.json();
@@ -91,10 +121,11 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
           const chunk = JSON.parse(trimmed.slice(6));
           const delta = chunk.choices?.[0]?.delta?.content || '';
           if (delta) { full += delta; onToken(delta); }
+          if (chunk.usage) streamUsage = chunk.usage;
         } catch { /* skip malformed chunk */ }
       }
     }
-    return { content: full, tokens: null };
+    return { content: full, tokens: streamUsage };
   }
 
   const data = await resp.json();
@@ -129,6 +160,7 @@ async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temper
 
   if (shouldStream) {
     let full = '';
+    let streamUsage = null;
     const reader = resp.body?.getReader?.();
     if (!reader) {
       const data = await resp.json();
@@ -148,14 +180,23 @@ async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temper
         if (!trimmed.startsWith('data: ')) continue;
         try {
           const evt = JSON.parse(trimmed.slice(6));
+          if (evt.type === 'message_start' && evt.message?.usage) {
+            streamUsage = streamUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+            streamUsage.prompt_tokens = evt.message.usage.input_tokens || 0;
+          }
           if (evt.type === 'content_block_delta') {
             const delta = evt.delta?.text || '';
             if (delta) { full += delta; onToken(delta); }
           }
+          if (evt.type === 'message_delta' && evt.usage) {
+            streamUsage = streamUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+            streamUsage.completion_tokens = evt.usage.output_tokens || 0;
+            streamUsage.total_tokens = (streamUsage.prompt_tokens || 0) + (evt.usage.output_tokens || 0);
+          }
         } catch { /* skip */ }
       }
     }
-    return { content: full, tokens: null };
+    return { content: full, tokens: streamUsage };
   }
 
   const data = await resp.json();
@@ -184,7 +225,7 @@ async function withRetry(fn, retries = 2) {
   }
 }
 
-export async function callAI({ baseUrl, apiKey, model, systemPrompt, prompt, temperature = 0.3, maxTokens = 4096, provider = 'openai', stream = false, onToken, responseFormat }) {
+export async function callAI({ baseUrl, apiKey, model, systemPrompt, prompt, temperature = 0.3, maxTokens = 8192, provider = 'openai', stream = false, onToken, responseFormat }) {
   return withRetry(() => {
     if (provider === 'claude') {
       return callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken });
