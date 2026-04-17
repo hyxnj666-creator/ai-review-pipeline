@@ -28,6 +28,7 @@ ${rulesStr}
 - Put low-priority refactor/naming/style suggestions into 🔵 instead of 🟢
 - Do not report trivial style-only issues unless they clearly hurt readability or maintainability
 - In React/JSX, plain \`{value}\` text rendering is escaped by default and is NOT XSS by itself. Only report XSS when there is an actual unsafe sink such as \`dangerouslySetInnerHTML\`, \`innerHTML\`, \`outerHTML\`, untrusted URL/protocol injection, or equivalent unsafe rendering
+- In the final JSON, always use forward slashes in file paths (for example \`src/app/page.tsx\`). Never use Windows backslashes in the \`file\` field
 
 ## Scoring
 
@@ -84,6 +85,7 @@ ${rulesStr}
 - 低优先级的重构 / 命名 / 样式建议，请放到 🔵，不要放到 🟢
 - 不要报告纯样式层面的琐碎问题，除非它确实影响可读性或可维护性
 - 在 React/JSX 中，普通的 \`{value}\` 文本渲染默认会转义，**本身不算 XSS**。只有出现 \`dangerouslySetInnerHTML\`、\`innerHTML\`、\`outerHTML\`、不可信 URL/协议注入等真实不安全渲染时，才报告 XSS
+- 最终 JSON 里的 \`file\` 路径一律使用正斜杠 `/`（例如 \`src/app/page.tsx\`），不要输出 Windows 反斜杠路径
 
 ## 评分规则
 
@@ -209,25 +211,42 @@ function postProcessIssues(issues) {
   return [...nonSuggestion, ...greens, ...blues];
 }
 
+function sanitizeReviewJson(raw) {
+  const normalizedEscapes = String(raw || '').replace(/\\(?!["\\/bfnrtu])/g, '/');
+  return normalizedEscapes.replace(/("file"\s*:\s*")([^"]*)(")/g, (_, prefix, value, suffix) => {
+    const normalized = value.replace(/\\+/g, '/').trim();
+    return `${prefix}${normalized}${suffix}`;
+  });
+}
+
+function finalizeReviewResult(result, content) {
+  result.issues = postProcessIssues(result.issues || []);
+  const red = result.issues.filter((issue) => issue.severity === 'red').length;
+  const yellow = result.issues.filter((issue) => issue.severity === 'yellow').length;
+  const green = result.issues.filter((issue) => issue.severity === 'green').length;
+  const blue = result.issues.filter((issue) => issue.severity === 'blue').length;
+  result.red = red;
+  result.yellow = yellow;
+  result.green = green;
+  result.blue = blue;
+  result.score = calcScore(red, yellow, green, blue);
+  return { markdown: content, ...result, parseError: false };
+}
+
 export function parseReview(content) {
-  const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+  const jsonMatch = content.match(/```json\s*([\s\S]*?)```/i);
   if (!jsonMatch) {
     return { markdown: content, score: 0, red: 0, yellow: 0, green: 0, blue: 0, summary: 'AI 未返回结构化 JSON，无法判定质量', issues: [], parseError: true };
   }
-  try {
-    const result = JSON.parse(jsonMatch[1]);
-    result.issues = postProcessIssues(result.issues || []);
-    const red = result.issues.filter((issue) => issue.severity === 'red').length;
-    const yellow = result.issues.filter((issue) => issue.severity === 'yellow').length;
-    const green = result.issues.filter((issue) => issue.severity === 'green').length;
-    const blue = result.issues.filter((issue) => issue.severity === 'blue').length;
-    result.red = red;
-    result.yellow = yellow;
-    result.green = green;
-    result.blue = blue;
-    result.score = calcScore(red, yellow, green, blue);
-    return { markdown: content, ...result, parseError: false };
-  } catch {
-    return { markdown: content, score: 0, red: 0, yellow: 0, green: 0, blue: 0, summary: 'JSON 解析失败，无法判定质量', issues: [], parseError: true };
+  const rawJson = String(jsonMatch[1] || '').trim();
+  const candidates = [rawJson, sanitizeReviewJson(rawJson)].filter(Boolean);
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const result = JSON.parse(candidate);
+      return finalizeReviewResult(result, content);
+    } catch {
+      // Try the next normalized form.
+    }
   }
+  return { markdown: content, score: 0, red: 0, yellow: 0, green: 0, blue: 0, summary: 'JSON 解析失败，无法判定质量', issues: [], parseError: true };
 }

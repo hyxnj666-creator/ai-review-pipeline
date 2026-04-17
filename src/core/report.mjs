@@ -122,14 +122,16 @@ export function generateHTML(review, meta, test) {
   const issues = review.issues || [];
   const threshold = meta.threshold || 95;
   const testsPassed = !test?.execution?.attempted || test.execution.passed;
-  const overallPassed = review.score >= threshold && testsPassed;
+  const overallPassed = !review.parseError && review.score >= threshold && testsPassed;
   const blockingCount = review.red || 0;
   const nonBlockingCount = (review.yellow || 0) + (review.green || 0);
   const suggestionCount = review.blue || 0;
   const testHTML = buildTestHTML(test);
 
   let issuesHTML = '';
-  if (issues.length === 0) {
+  if (review.parseError) {
+    issuesHTML = '<div style="text-align:center;padding:32px;color:#f59e0b;font-size:16px">⚠️ Structured review JSON could not be parsed. This run is blocked because the review result is unreliable.</div>';
+  } else if (issues.length === 0) {
     issuesHTML = '<div style="text-align:center;padding:32px;color:#22c55e;font-size:16px">✅ No issues found</div>';
   } else {
     const severitySections = Object.entries(SEVERITY_META)
@@ -255,6 +257,7 @@ h1{font-size:20px;color:#22d3ee;margin-bottom:4px}
     <div class="sum">${escHtml(review.summary) || '—'}</div>
     <div class="badges">
       <span class="${overallPassed ? 'b bp' : 'b bf'}">${overallPassed ? '✅ PASS' : '❌ BLOCKED'}</span>
+      ${review.parseError ? `<span class="b by">⚠️ Review Parse Error</span>` : ''}
       ${review.red ? `<span class="b br">🔴 ${review.red} Critical</span>` : ''}
       ${review.yellow ? `<span class="b by">🟡 ${review.yellow} Warning</span>` : ''}
       ${review.green ? `<span class="b bg">🟢 ${review.green} Improvement</span>` : ''}

@@ -1,6 +1,6 @@
 {
   "name": "ai-review-pipeline",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "description": "Zero-config AI code quality pipeline CLI. Review current git changes or target files directly, then test, report, and auto-fix with --fix.",
   "type": "module",
   "bin": {

@@ -18,6 +18,7 @@ export default {
   roundTitle: (n) => `Round ${n} Code Review`,
   score: (s, r, y, g, b = 0) => `Score: ${s}/100 | 🔴${r} 🟡${y} 🟢${g} 🔵${b}`,
   passed: (s, t) => `Quality passed (${s} >= ${t}). Review passed!`,
+  parseErrorBlocked: 'AI returned review JSON that could not be parsed. This run is unreliable and is now treated as failed.',
   maxRoundsReached: (n) => `Reached max rounds ${n}, exiting fix loop.`,
   fixRound: (n) => `Round ${n} Auto-fix`,
   fixSafetyNote: 'Auto-fix only addresses code quality issues, not business logic.',

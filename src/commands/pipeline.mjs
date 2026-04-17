@@ -47,6 +47,7 @@ function mergeReviews(results) {
   const markdowns = [];
   const allIssues = [];
   const seen = new Set();
+  const hasParseError = results.some((r) => r?.parseError);
   for (const r of results) {
     for (const issue of (r.issues || [])) {
       const key = `${issue.severity || ''}::${issue.file || ''}::${issue.title || ''}::${issue.code || ''}::${issue.line || ''}`;
@@ -61,13 +62,13 @@ function mergeReviews(results) {
   const totalYellow = allIssues.filter((issue) => issue.severity === 'yellow').length;
   const totalGreen = allIssues.filter((issue) => issue.severity === 'green').length;
   const totalBlue = allIssues.filter((issue) => issue.severity === 'blue').length;
-  const score = Math.max(0, 100 - totalRed * 20 - totalYellow * 5 - totalGreen * 1);
+  const score = hasParseError ? 0 : Math.max(0, 100 - totalRed * 20 - totalYellow * 5 - totalGreen * 1);
   return {
     score, red: totalRed, yellow: totalYellow, green: totalGreen, blue: totalBlue,
     issues: allIssues,
     summary: [...new Set(summaries)].join('; ') || '',
     markdown: markdowns.join('\n\n---\n\n'),
-    parseError: false,
+    parseError: hasParseError,
   };
 }
 
@@ -277,6 +278,11 @@ export async function run(args) {
       log('💬', lastReview.summary);
     }
     prevScore = lastReview.score;
+
+    if (lastReview.parseError) {
+      if (!jsonOutput) log('⚠️', t('parseErrorBlocked'));
+      break;
+    }
 
     const effectiveRed = skipLevels.has('red') ? 0 : lastReview.red;
     if (lastReview.score >= threshold && effectiveRed === 0) {

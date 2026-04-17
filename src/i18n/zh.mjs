@@ -18,6 +18,7 @@ export default {
   roundTitle: (n) => `第 ${n} 轮 Code Review`,
   score: (s, r, y, g, b = 0) => `质量评分: ${s}/100 | 🔴${r} 🟡${y} 🟢${g} 🔵${b}`,
   passed: (s, t) => `质量达标（${s} ≥ ${t}），Review 通过！`,
+  parseErrorBlocked: 'AI 返回的 Review JSON 无法解析，本轮结果不可信，已按失败处理。',
   maxRoundsReached: (n) => `已达最大轮次 ${n}，跳出修复循环。`,
   fixRound: (n) => `第 ${n} 轮自动修复`,
   fixSafetyNote: '自动修复只处理代码质量问题，不改变功能逻辑。',
