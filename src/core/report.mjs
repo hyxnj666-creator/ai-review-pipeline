@@ -32,17 +32,53 @@ function highlightCode(raw) {
   return result;
 }
 
-function getCodeSnippetHTML(file, line, contextLines = 5) {
-  if (!file || !line) return '';
+function extractSearchNeedles(issue) {
+  const needles = [];
+  if (issue.code) {
+    for (const raw of issue.code.trim().split('\n')) {
+      const l = raw.trim();
+      if (l.length >= 6) needles.push(l);
+    }
+  }
+  const combined = `${issue.title || ''} ${issue.desc || ''} ${issue.fix || ''}`;
+  const strLiterals = combined.match(/["`']([^"'`]{4,})["`']/g);
+  if (strLiterals) {
+    for (const s of strLiterals) needles.push(s.slice(1, -1).trim());
+  }
+  const identifiers = combined.match(/`([A-Za-z_$][\w$.]*(?:\.\w+)*)`/g);
+  if (identifiers) {
+    for (const id of identifiers) needles.push(id.slice(1, -1));
+  }
+  const KEYWORD_RE = /\b(innerHTML|dangerouslySetInnerHTML|v-html|eval\s*\(|document\.write|\.exec\(|password|secret|token|api[_-]?key|credentials|hardcod)/i;
+  const kwMatch = combined.match(KEYWORD_RE);
+  if (kwMatch) needles.push(kwMatch[1]);
+  return needles;
+}
+
+function locateInFile(lines, aiLine, issue) {
+  const needles = extractSearchNeedles(issue);
+  for (const needle of needles) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(needle)) return i + 1;
+    }
+  }
+  if (typeof aiLine === 'number' && aiLine > 0 && aiLine <= lines.length) return aiLine;
+  return 0;
+}
+
+function getCodeSnippetHTML(file, issue, contextLines = 8) {
+  if (!file) return '';
   try {
     const fullPath = resolve(process.cwd(), file);
     const content = readFileSync(fullPath, 'utf-8');
     const lines = content.split('\n');
-    const start = Math.max(0, line - contextLines - 1);
-    const end = Math.min(lines.length, line + contextLines);
+    const realLine = locateInFile(lines, issue.line, issue);
+    if (realLine <= 0) return '';
+    const start = Math.max(0, realLine - contextLines - 1);
+    const end = Math.min(lines.length, realLine + contextLines);
     return lines.slice(start, end).map((l, idx) => {
       const num = start + idx + 1;
-      const isTarget = num === line;
+      const isTarget = num === realLine;
       const numStr = String(num).padStart(4);
       const highlighted = highlightCode(l);
       const cls = isTarget ? ' class="hl-target"' : '';
@@ -123,9 +159,9 @@ export function generateHTML(review, meta, test) {
               const highlighted = i.code.split('\n').map((l) => highlightCode(l)).join('\n');
               snippetHTML = `<details class="code-detail" open><summary class="code-toggle">▶ Problematic code</summary><pre class="code-block">${highlighted}</pre></details>`;
             } else {
-              const fallback = getCodeSnippetHTML(i.file, i.line);
+              const fallback = getCodeSnippetHTML(i.file, i);
               if (fallback) {
-                snippetHTML = `<details class="code-detail"><summary class="code-toggle">▶ Code context (~L${i.line})</summary><pre class="code-block">${fallback}</pre></details>`;
+                snippetHTML = `<details class="code-detail"><summary class="code-toggle">▶ Code context (~L${i.line || '?'})</summary><pre class="code-block">${fallback}</pre></details>`;
               }
             }
 
