@@ -16,7 +16,7 @@ AI-powered code quality pipeline CLI — Review + Test + Report in one command. 
 - **Unified pipeline** — Default: Review + Test + Report (read-only). `--fix` enables auto-fix loop
 - **Flexible targets** — Files, folders, comma-separated multi-targets
 - **`--full` mode** — Review entire file content without git changes
-- **HTML reports** — Score + issue list + fix suggestions + syntax-highlighted code context, attachable to PRs
+- **HTML reports** — Score + issue list + fix suggestions, attachable to PRs
 - **JSONC config** — `.ai-pipeline.json` with comments support, shared across team
 - **CI-ready** — `--json` output + exit codes for GitHub Actions / GitLab CI
 - **Bilingual prompts** — `--lang en` switches both output AND AI prompt to English
@@ -26,56 +26,19 @@ AI-powered code quality pipeline CLI — Review + Test + Report in one command. 
 
 ```bash
 # Zero config — just run it (built-in free model)
-# Default behavior: review current git changes, then generate tests/report
 npx ai-review-pipeline
 
-# Auto-fix current git changes
+# Auto-fix pipeline
 npx ai-review-pipeline --fix
-
-# Review a specific file/folder directly
-npx ai-review-pipeline --file src/ --full
 ```
 
-> 💡 No API Key needed to try the full pipeline. The built-in free model (SiliconFlow) has rate limits — configure your own Key for a faster and more stable experience.
-
-## Four Commands People Misread Most Often
-
-```bash
-# 1) Review current git changes (default mode)
-ai-rp
-
-# 2) Target one file/folder directly
-ai-rp --file src/utils.ts
-
-# 3) Always review the full current file/folder
-ai-rp --file src/utils.ts --full
-
-# 4) Auto-fix using the same target selection rules
-ai-rp --fix
-```
-
-Quick meaning:
-
-- `ai-rp` reviews staged changes first, otherwise `git diff HEAD`
-- `ai-rp --file <path>` targets that file/folder; it prefers git diff, then falls back to current file content
-- `ai-rp --file <path> --full` always reviews the full current file/folder
-- `ai-rp --fix` uses the same target selection logic, then runs review + auto-fix + re-review + test + report
-
-If you just want "check exactly this file right now", use:
-
-```bash
-ai-rp --file path/to/file --full
-```
+> 💡 No API Key needed to try the full pipeline. The built-in free model has rate limits — configure your own Key for a faster and more stable experience.
 
 <details>
 <summary>Configure your own API Key (optional, recommended)</summary>
 
 ```bash
 # Pick any provider and add to .env.local
-
-# OpenAI + GPT-5
-echo 'OPENAI_API_KEY=sk-xxx' >> .env.local
-echo 'AI_REVIEW_MODEL=gpt-5-chat-latest' >> .env.local
 
 # DeepSeek (affordable & capable)
 echo 'DEEPSEEK_API_KEY=sk-xxx' >> .env.local
@@ -120,15 +83,13 @@ Short alias: `ai-rp` can be used instead of `ai-review-pipeline`.
 ### Default Mode (Review + Test + Report)
 
 ```
-① AI Review (1 round, read-only)
+① Deterministic Rule Check + AI Review (1 round, read-only)
        │
-② AI Test Generation (functional / adversarial / edge)
+② AI Test Case Generation (functional / adversarial / edge)
        │
-③ Execute generated tests (Vitest/Jest for JS/TS projects)
+③ Generate HTML Report
        │
-④ Generate HTML Report
-       │
-⑤ Exit (🔴 issues → exit 1; no 🔴 → exit 0)
+④ Gate Check (any 🔴 / 🟡 > maxMajor / score < threshold → exit 1; else exit 0)
 ```
 
 ### `--fix` Mode (Review + Fix Loop + Test + Report)
@@ -165,7 +126,7 @@ Short alias: `ai-rp` can be used instead of `ai-review-pipeline`.
 | `ai-rp` | Default: Review + Test + Report (read-only) |
 | `ai-rp review` | Same as default (alias) |
 | `ai-rp fix` | Equivalent to `ai-rp --fix` (Review + Fix loop + Test + Report) |
-| `ai-rp test` | Standalone AI test generation + real test execution |
+| `ai-rp test` | Standalone AI test case generation |
 | `ai-rp init` | Initialize config file |
 
 ### Core Options
@@ -188,65 +149,55 @@ Short alias: `ai-rp` can be used instead of `ai-review-pipeline`.
 | `--branch <base>` | Compare branch (e.g. `main`) |
 | `--json` | JSON output for CI/CD |
 | `--no-report` | Skip HTML report generation |
-| `--no-run-tests` | Generate AI tests but skip real test execution |
+
+### Gate Options (shared by review and fix)
+
+| Option | Description |
+|--------|-------------|
+| `--threshold <n>` | Score threshold (default: 85) |
+| `--max-major <n>` | Max allowed Major issues before blocking (default: 3). Any Blocker always blocks. |
+| `--no-test` | Skip test case generation |
+| `--skip <levels>` | Skip severities for gate/fix (e.g. `red,yellow`) |
 
 ### Fix Options
 
 | Option | Description |
 |--------|-------------|
-| `--threshold <n>` | Quality threshold (default: 95, range 0-100) |
 | `--max-rounds <n>` | Max fix rounds (default: 5) |
 | `--no-commit` | Don't auto-commit after fix |
-| `--no-test` | Skip AI test generation and real test execution |
-| `--skip <levels>` | Skip fix levels (e.g. `green,yellow`) |
 
 ### Exit Codes
 
 | Scenario | Code |
 |----------|------|
-| Review passed (no red issues, score meets threshold) | `0` |
-| Review failed (red issues found) | `1` |
-| Review passed but real test execution failed | `1` |
+| Gate passed (no Blocker, Major <= max-major, score >= threshold) | `0` |
+| Gate blocked (any Blocker, too many Majors, score below threshold) | `1` |
 | `--fix` passed | `0` |
 | `--fix` maxRounds exhausted, still failing | `1` (blocks CI, but report is still generated) |
 
 ### `--file` vs `--full`
 
 ```bash
-# No --file: review staged changes first, otherwise git diff vs HEAD
-ai-rp
-
-# With --file: prefer git changes for that file
+# Review only git changes for that file
 ai-rp --file src/utils.ts
 
-# If that file has no git diff (or you're outside a git repo),
-# the tool falls back to reading the current file content
-
-# Force full-file review directly (no git changes needed)
+# Review entire file content (no git changes needed)
 ai-rp --file src/utils.ts --full
 
-# Folder is also supported
-ai-rp --file src/views --full
+# No --file: review all staged / HEAD git changes
+ai-rp
 ```
-
-Rule of thumb:
-
-- `ai-rp` → review current git changes
-- `ai-rp --file <path>` → target that file/folder; prefer diff if available, otherwise review current content
-- `ai-rp --file <path> --full` → always review the entire current file/folder
-- `ai-rp --fix` → run the same target selection as above, then auto-fix + re-review + test + report
 
 ---
 
-### `test` — AI Test Generation + Execution
+### `test` — AI Test Case Generation
 
-Generate three types of test cases for target files, then execute the generated test file when a JS/TS runner is available.
+Generate three types of test cases for target files.
 
 | Option | Description |
 |--------|-------------|
-| `--file <path>` | Target file/folder directly (no git history required) |
+| `--file <path>` | Target file |
 | `--staged` | Generate tests for staged files |
-| `--no-run-tests` | Only generate test code, skip execution |
 
 ```bash
 ai-rp test --file src/utils.ts
@@ -280,7 +231,7 @@ ai-rp init    # Creates .ai-pipeline.json in project root
 | **Claude** | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` | Strong at code |
 | **Qwen** | `qwen-plus` | `DASHSCOPE_API_KEY` | Alibaba Cloud |
 | **Gemini** | `gemini-2.0-flash` | `GEMINI_API_KEY` | Google |
-| **SiliconFlow** | `Qwen2.5-Coder-32B` | `SILICONFLOW_API_KEY` | Affordable, works in China |
+| **SiliconFlow** | `Qwen2.5-Coder-7B` | `SILICONFLOW_API_KEY` | Free tier available (China) |
 | **Ollama** | `qwen2.5-coder` | No key needed | Local, private |
 | **Custom** | — | `AI_REVIEW_API_KEY` | Any OpenAI-compatible API |
 
@@ -330,11 +281,10 @@ Run `ai-rp init` to generate `.ai-pipeline.json`. Commit it to share with your t
 ```jsonc
 {
   "review": {
-    "threshold": 95,           // Quality threshold (0-100)
+    "threshold": 85,           // Score threshold (0-100)
+    "maxMajor": 3,             // Max 🟡 Majors before blocking merge
     "maxRounds": 5,            // Max fix rounds in --fix mode
-    "model": "",               // Override model (e.g. gpt-5-chat-latest)
-    "temperature": 0.1,        // Lower = more stable review output
-    "maxTokens": 8192,         // Review response token budget
+    "model": "",               // Override model (default: gpt-4o-mini)
     "maxDiffLines": 1500,      // Auto-truncate diff beyond this line count
     "customRules": [           // Project-specific review rules
       "No any type allowed",
@@ -342,20 +292,11 @@ Run `ai-rp init` to generate `.ai-pipeline.json`. Commit it to share with your t
     ]
   },
   "fix": {
-    "safetyMinRatio": 0.5,     // Fixed file must be at least 50% of original (prevents truncation)
-    "temperature": 0.2,
-    "maxTokens": 8192
+    "safetyMinRatio": 0.5      // Fixed file must be at least 50% of original (prevents truncation)
   },
   "test": {
-    "run": true,               // Execute generated tests by default
     "stack": "auto",           // Auto-detect tech stack, or specify manually
-    "maxCases": 8,             // Max test cases to generate
-    "temperature": 0.4,
-    "maxTokens": 12288,
-    "tempDir": ".ai-tests",    // Temporary generated test files
-    "keepFailed": true,        // Keep failed generated tests for debugging
-    "command": "",             // Optional override, e.g. "npx vitest run {file}" (without {file}, runs as-is)
-    "timeoutMs": 120000
+    "maxCases": 8              // Max test cases to generate
   },
   "report": {
     "outputDir": ".ai-reports",
@@ -364,39 +305,27 @@ Run `ai-rp init` to generate `.ai-pipeline.json`. Commit it to share with your t
 }
 ```
 
-If you have OpenAI API access to GPT-5, set:
+## Severity & Scoring (Commercial Gate)
 
-```bash
-OPENAI_API_KEY=sk-xxx
-AI_REVIEW_MODEL=gpt-5-chat-latest
-```
+Base score: 100. Default pass threshold: 85.
 
-Recommended starting token budgets:
+| Level | Name | Covers | Deduction | Gate Rule |
+|-------|------|--------|-----------|-----------|
+| 🔴 | **Blocker** | Security vulnerabilities (XSS, injection, hardcoded secrets, CSRF, data leakage), correctness bugs (wrong business logic, race conditions, silent data loss), stability risks (resource leaks, memory leaks, unhandled rejections) | **-25** each | **Any single 🔴 blocks merge** |
+| 🟡 | **Major** | Unguarded null on method calls, missing input validation, swallowed errors, dangerous type casts, hot-path perf issues, UX degradation on critical paths | **-5** each | **More than 3 blocks merge** |
+| 🟢 | **Minor** | Business logic duplication, magic numbers, missing docs for complex algorithms, minor perf hints, dead code | **-1** each | Score only |
+| 🔵 | **Info** | UI/styling duplication, naming preferences, formatting, refactor ideas | **0** each (density: -1 per 🔵 over 5, cap -3) | Does not block |
 
-- `review.maxTokens`: `8192`
-- `fix.maxTokens`: `8192`
-- `test.maxTokens`: `12288`
+### Gate Logic (three-way check)
 
-Real test execution notes:
+1. Any 🔴 Blocker → **BLOCKED** (reason shown: `blocker:1(security:1)`)
+2. 🟡 Major > `--max-major` (default 3) → **BLOCKED**
+3. Score < `--threshold` (default 85) → **BLOCKED**
+4. All pass → **PASS**
 
-- JS/TS projects default to executing generated tests after AI generation
-- The tool auto-detects `vitest` first, then `jest`
-- Set `test.command` to override runner detection
-- Use `{file}` in `test.command` when your runner should execute the generated temp test file directly
-- If `test.command` does not include `{file}`, the command runs exactly as written
-- If real test execution runs and fails, the pipeline exits with code `1`
-- Use `--no-run-tests` or `test.run: false` if you only want AI-generated test code
+### Issue Categories
 
-## Scoring
-
-Base score: 100. Default pass threshold: 95.
-
-| Level | Covers | Deduction |
-|-------|--------|-----------|
-| 🔴 Critical | Logic errors, security vulnerabilities, data risks, uncaught async errors, resource leaks / infinite loops | -20 each |
-| 🟡 Warning | Unhandled edge cases, type issues, missing error handling (UX-only; escalate to 🔴 if data loss / security risk) | -5 each |
-| 🟢 Improvement | Repeated logic, weak abstraction, maintainability debt, risky hardcoding, meaningful quality issues | -1 each |
-| 🔵 Suggestion | Naming polish, optional extraction, style tidying, comment suggestions, low-priority refactors | 0 each |
+Each issue is auto-classified into one of: `security` | `correctness` | `stability` | `logic` | `perf` | `types` | `api` | `ux` | `quality` | `style`. Categories are shown in the JSON output and HTML report for team triage.
 
 ## Environment Variables
 
@@ -461,47 +390,27 @@ pre-push:
 }
 ```
 
-## Benchmark (Repo Only)
-
-Use fixed fixtures to compare whether prompt/model/rule changes improved or regressed review quality.
-This benchmark suite is for repository development and contributor validation. It is not included in the published npm package by default.
-
-```bash
-npm run benchmark
-npm run benchmark -- --model gpt-4o-mini
-npm run benchmark -- --case unsafe-html
-```
-
-Current cases cover:
-
-- real blocking risk detection (`unsafe-html`)
-- runtime null-safety issues (`unguarded-map`)
-- low-value Tailwind noise suppression (`tailwind-noise`)
-- hardcoded secret leakage (`hardcoded-secret`)
-- unsafe assertions like `as any` (`unsafe-any`)
-- uncaught async/network failures (`unhandled-fetch`)
-- duplicate-submit / race-prone UI flow (`duplicate-submit`)
-
 ## Cheat Sheet
 
 ```bash
 # ── Default mode (Review + Test + Report, read-only) ──
-ai-rp                                          # review staged / HEAD git changes
-ai-rp --file src/a.vue                         # target file; prefer diff, fallback to file content
-ai-rp --file src/a.vue --full                  # always review full file
-ai-rp --file src/views --full                  # always review entire folder
+ai-rp                                          # review git changes
+ai-rp --file src/a.vue                         # target file
+ai-rp --file src/a.vue --full                  # review full file
+ai-rp --file src/views --full                  # review entire folder
 ai-rp --branch main                            # compare branch
 ai-rp --staged --json                          # CI mode
 
 # ── Fix mode (Review + Auto-fix + Test + Report) ──
-ai-rp --fix                                    # auto-fix current git changes
+ai-rp --fix                                    # full fix pipeline
 ai-rp fix                                      # alias
-ai-rp --fix --file src/a.vue --full            # fix a specific file directly
+ai-rp --fix --file src/a.vue --full            # fix specific file
 ai-rp fix --threshold 90 --max-rounds 3        # custom params
+ai-rp fix --max-major 5                        # raise major issue tolerance
 ai-rp fix --no-commit --skip green             # no commit, fix red+yellow only
 
 # ── Standalone test ──
-ai-rp test --file src/utils.ts                 # generate tests for this file directly
+ai-rp test --file src/utils.ts                 # generate tests
 ai-rp test --staged                            # staged file tests
 
 # ── Init ──

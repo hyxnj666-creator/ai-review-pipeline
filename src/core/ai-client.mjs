@@ -74,6 +74,31 @@ export function getProviderDefaults(provider) {
   return PROVIDERS[provider] || PROVIDERS.openai;
 }
 
+function shouldUseOpenAIMaxCompletionTokens(baseUrl, model) {
+  const normalizedBaseUrl = String(baseUrl || '').toLowerCase();
+  const normalizedModel = String(model || '').toLowerCase();
+  return normalizedBaseUrl.includes('api.openai.com') && /^gpt-5([.-]|$)/.test(normalizedModel);
+}
+
+function buildOpenAICompatibleBody({ model, messages, temperature, maxTokens, shouldStream, responseFormat, useMaxCompletionTokens = false }) {
+  const body = { model, messages, temperature };
+  if (typeof maxTokens === 'number' && Number.isFinite(maxTokens)) {
+    body[useMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = maxTokens;
+  }
+  if (shouldStream) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  }
+  if (responseFormat && !shouldStream) body.response_format = responseFormat;
+  return body;
+}
+
+function shouldRetryWithMaxCompletionTokens(errorText) {
+  return /unsupported parameter/i.test(errorText)
+    && /max_tokens/i.test(errorText)
+    && /max_completion_tokens/i.test(errorText);
+}
+
 async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const messages = [];
@@ -81,14 +106,7 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
   messages.push({ role: 'user', content: prompt });
 
   const shouldStream = stream && onToken;
-  const body = { model, messages, temperature, max_tokens: maxTokens };
-  if (shouldStream) {
-    body.stream = true;
-    body.stream_options = { include_usage: true };
-  }
-  if (responseFormat && !shouldStream) body.response_format = responseFormat;
-
-  const resp = await fetchImpl(url, {
+  const sendRequest = (body) => fetchImpl(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -96,6 +114,34 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
     },
     body: JSON.stringify(body),
   });
+
+  let body = buildOpenAICompatibleBody({
+    model,
+    messages,
+    temperature,
+    maxTokens,
+    shouldStream,
+    responseFormat,
+    useMaxCompletionTokens: shouldUseOpenAIMaxCompletionTokens(baseUrl, model),
+  });
+  let resp = await sendRequest(body);
+  if (!resp.ok) {
+    const errorText = await resp.text();
+    if (body.max_tokens != null && shouldRetryWithMaxCompletionTokens(errorText)) {
+      body = buildOpenAICompatibleBody({
+        model,
+        messages,
+        temperature,
+        maxTokens,
+        shouldStream,
+        responseFormat,
+        useMaxCompletionTokens: true,
+      });
+      resp = await sendRequest(body);
+    } else {
+      throw new Error(`API ${resp.status}: ${errorText}`);
+    }
+  }
   if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
 
   if (shouldStream) {

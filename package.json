@@ -1,7 +1,7 @@
 {
   "name": "ai-review-pipeline",
-  "version": "5.0.2",
-  "description": "Zero-config AI code quality pipeline CLI. Review current git changes or target files directly, then test, report, and auto-fix with --fix.",
+  "version": "5.1.0",
+  "description": "Zero-config AI code quality pipeline CLI: deterministic rule checks + AI review, 4-tier team-friendly scoring, HTML report, and a built-in SiliconFlow fallback. Review, auto-fix and generate tests from a single command.",
   "type": "module",
   "bin": {
     "ai-review-pipeline": "bin/cli.mjs",
@@ -16,8 +16,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "echo \"No tests yet\"",
-    "benchmark": "node scripts/benchmark.mjs"
+    "test": "echo \"No tests yet\""
   },
   "keywords": [
     "ai",

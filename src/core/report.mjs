@@ -74,55 +74,30 @@ function renderLogBlock(title, content) {
 }
 
 function buildTestHTML(test) {
-  if (!test) return '';
-
-  const execution = test.execution || {};
-  const statusText = execution.attempted
-    ? (execution.passed ? 'PASS' : 'FAILED')
-    : 'SKIPPED';
-  const statusClass = execution.attempted
-    ? (execution.passed ? 'bp' : 'bf')
-    : 'bb';
+  if (!test || !test.output) return '';
 
   return `<div class="sec">
-  <h2>Test Execution</h2>
+  <h2>AI-Generated Tests</h2>
   <div class="test-card">
     <div class="test-row">
-      <span class="b ${statusClass}">${statusText}</span>
       ${test.stack ? `<span class="b bb">${escHtml(test.stack)}</span>` : ''}
-      ${execution.runner ? `<span class="b by">Runner: ${escHtml(execution.runner)}</span>` : ''}
+      ${test.tokens?.total_tokens ? `<span class="b by">${test.tokens.total_tokens} tokens</span>` : ''}
     </div>
-    ${execution.reason ? `<div class="test-note">${escHtml(execution.reason)}</div>` : ''}
-    <div class="test-meta-grid">
-      <div class="summary-card">
-        <div class="k">Generated Temp File</div>
-        <div class="test-meta-value">${execution.tempFile ? `<code>${escHtml(execution.tempFile)}</code>` : '—'}</div>
-        <div class="d">${execution.keptFile ? 'Kept for debugging because execution failed.' : 'Removed automatically after successful execution.'}</div>
-      </div>
-      <div class="summary-card">
-        <div class="k">Command</div>
-        <div class="test-meta-value">${execution.command ? `<code>${escHtml(execution.command)}</code>` : '—'}</div>
-        <div class="d">${typeof execution.exitCode === 'number' ? `Exit code: ${execution.exitCode}` : 'No process executed.'}</div>
-      </div>
-      <div class="summary-card">
-        <div class="k">Generation</div>
-        <div class="test-meta-value">${test.tokens?.total_tokens || 0} tokens</div>
-        <div class="d">${execution.elapsedMs ? `Execution time: ${(execution.elapsedMs / 1000).toFixed(1)}s` : 'No execution time recorded.'}</div>
-      </div>
-    </div>
-    ${renderLogBlock('Generated AI Output', test.output || '')}
-    ${renderLogBlock('stdout', execution.stdout || '')}
-    ${renderLogBlock('stderr', execution.stderr || '')}
+    ${renderLogBlock('Generated test cases & code', test.output)}
   </div>
 </div>`;
 }
 
 export function generateHTML(review, meta, test) {
-  const sc = review.score >= 95 ? '#22c55e' : review.score >= 80 ? '#eab308' : '#ef4444';
+  const threshold = meta.threshold || 85;
+  const maxMajor = meta.maxMajor ?? 3;
+  const sc = review.score >= 95 ? '#22c55e' : review.score >= threshold ? '#eab308' : '#ef4444';
   const issues = review.issues || [];
-  const threshold = meta.threshold || 95;
-  const testsPassed = !test?.execution?.attempted || test.execution.passed;
-  const overallPassed = !review.parseError && review.score >= threshold && testsPassed;
+  const overallPassed =
+    !review.parseError &&
+    review.score >= threshold &&
+    (review.red || 0) === 0 &&
+    (review.yellow || 0) <= maxMajor;
   const blockingCount = review.red || 0;
   const nonBlockingCount = (review.yellow || 0) + (review.green || 0);
   const suggestionCount = review.blue || 0;
@@ -130,7 +105,7 @@ export function generateHTML(review, meta, test) {
 
   let issuesHTML = '';
   if (review.parseError) {
-    issuesHTML = '<div style="text-align:center;padding:32px;color:#f59e0b;font-size:16px">⚠️ Structured review JSON could not be parsed. This run is blocked because the review result is unreliable.</div>';
+    issuesHTML = '<div style="text-align:center;padding:32px;color:#f59e0b;font-size:16px">⚠️ The AI did not return a structured review JSON, so scoring is unreliable for this run.</div>';
   } else if (issues.length === 0) {
     issuesHTML = '<div style="text-align:center;padding:32px;color:#22c55e;font-size:16px">✅ No issues found</div>';
   } else {

@@ -23,11 +23,12 @@ function stripJsonComments(raw) {
 
 const DEFAULTS = {
   review: {
-    threshold: 95,
+    threshold: 85,
+    maxMajor: 3,
     maxRounds: 5,
     model: '',
     temperature: 0.1,
-    maxTokens: 8192,
+    maxTokens: 4096,
     maxDiffLines: 1500,
     enableRules: true,
     customRules: [],
@@ -40,15 +41,10 @@ const DEFAULTS = {
   },
   test: {
     enabled: true,
-    run: true,
     stack: 'auto',
     maxCases: 8,
     temperature: 0.4,
     maxTokens: 12288,
-    tempDir: '.ai-tests',
-    keepFailed: true,
-    command: '',
-    timeoutMs: 120000,
   },
   report: {
     format: 'html',

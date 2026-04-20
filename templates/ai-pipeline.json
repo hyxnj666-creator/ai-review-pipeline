@@ -1,33 +1,22 @@
 {
   "review": {
-    "threshold": 95,
+    "threshold": 85,
+    "maxMajor": 3,
     "maxRounds": 5,
     "model": "",
-    "temperature": 0.1,
-    "maxTokens": 8192,
     "maxDiffLines": 1500,
-    "enableRules": true,
     "customRules": [
       "禁止使用 any 类型",
       "API Key / Secret 不得硬编码"
     ]
   },
   "fix": {
-    "safetyMinRatio": 0.5,
-    "temperature": 0.2,
-    "maxTokens": 8192
+    "safetyMinRatio": 0.5
   },
   "test": {
     "enabled": true,
-    "run": true,
     "stack": "auto",
-    "maxCases": 8,
-    "temperature": 0.4,
-    "maxTokens": 12288,
-    "tempDir": ".ai-tests",
-    "keepFailed": true,
-    "command": "",
-    "timeoutMs": 120000
+    "maxCases": 8
   },
   "report": {
     "format": "html",

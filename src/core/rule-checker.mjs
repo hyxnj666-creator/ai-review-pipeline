@@ -1,7 +1,8 @@
 const CODE_FILE_RE = /\.(ts|tsx|vue|js|jsx|mjs|cjs|go|rs|java|kt|swift|rb|php|cs|uvue)$/i;
 
 function calcScore(red, yellow, green, blue = 0) {
-  return Math.max(0, 100 - red * 20 - yellow * 5 - green * 1);
+  const bluePenalty = Math.min(3, Math.max(0, blue - 5));
+  return Math.max(0, 100 - red * 25 - yellow * 5 - green * 1 - bluePenalty);
 }
 
 function escapeRegExp(value) {
