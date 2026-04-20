@@ -1,8 +1,89 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, extname } from 'node:path';
 import { execSync } from 'node:child_process';
 
 function escHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+const JS_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue']);
+
+function findBodyBraces(source, offset) {
+  let parenDepth = 0;
+  let angleDepth = 0;
+  let braceDepth = 0;
+  let bodyStart = -1;
+  let inString = '';
+
+  for (let i = offset; i < source.length; i++) {
+    const ch = source[i];
+    const prev = i > 0 ? source[i - 1] : '';
+
+    if (inString) {
+      if (ch === inString && prev !== '\\') inString = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+    if (ch === '/' && source[i + 1] === '/') { i = source.indexOf('\n', i); if (i < 0) break; continue; }
+    if (ch === '/' && source[i + 1] === '*') { i = source.indexOf('*/', i + 2); if (i < 0) break; i++; continue; }
+
+    if (ch === '(') { parenDepth++; continue; }
+    if (ch === ')') { parenDepth--; continue; }
+    if (ch === '<' && parenDepth === 0 && braceDepth === 0) { angleDepth++; continue; }
+    if (ch === '>' && angleDepth > 0) { angleDepth--; continue; }
+
+    if (parenDepth > 0 || angleDepth > 0) continue;
+
+    if (ch === '{') {
+      braceDepth++;
+      if (bodyStart < 0) bodyStart = i;
+    } else if (ch === '}') {
+      braceDepth--;
+      if (braceDepth === 0 && bodyStart >= 0) {
+        return { bodyStart, bodyEnd: i };
+      }
+    }
+  }
+  return null;
+}
+
+function extractScopes(source) {
+  const scopes = [];
+  const SCOPE_RE = /(?:export\s+)?(?:async\s+)?(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\(|[a-zA-Z_$]\w*\s*=>))|(?:class\s+(\w+))/g;
+  let m;
+  while ((m = SCOPE_RE.exec(source)) !== null) {
+    const name = m[1] || m[2] || m[3];
+    if (!name) continue;
+    const startLine = source.slice(0, m.index).split('\n').length;
+    const braces = findBodyBraces(source, m.index + m[0].length);
+    if (!braces) continue;
+    const endLine = source.slice(0, braces.bodyEnd + 1).split('\n').length;
+    scopes.push({ name, startLine, endLine, kind: m[3] ? 'class' : 'function' });
+  }
+  return scopes;
+}
+
+function findScopeForLine(scopes, line) {
+  let best = null;
+  for (const s of scopes) {
+    if (line >= s.startLine && line <= s.endLine) {
+      if (!best || (s.endLine - s.startLine) < (best.endLine - best.startLine)) best = s;
+    }
+  }
+  return best;
+}
+
+function findScopeByContent(scopes, lines, issue) {
+  const needles = extractSearchNeedles(issue);
+  for (const needle of needles) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(needle)) {
+        const lineNum = i + 1;
+        const scope = findScopeForLine(scopes, lineNum);
+        if (scope) return { scope, matchLine: lineNum };
+      }
+    }
+  }
+  return null;
+}
 
 const HL_KEYWORDS = new Set([
   'const','let','var','function','return','if','else','for','while','do','switch','case','break',
@@ -41,7 +122,7 @@ function extractSearchNeedles(issue) {
     }
   }
   const combined = `${issue.title || ''} ${issue.desc || ''} ${issue.fix || ''}`;
-  const strLiterals = combined.match(/["`']([^"'`]{4,})["`']/g);
+  const strLiterals = combined.match(/[""`']([^"'`""]{4,})[""`']/g);
   if (strLiterals) {
     for (const s of strLiterals) needles.push(s.slice(1, -1).trim());
   }
@@ -66,25 +147,57 @@ function locateInFile(lines, aiLine, issue) {
   return 0;
 }
 
+function renderSnippetLines(lines, start, end, highlightLine) {
+  return lines.slice(start, end).map((l, idx) => {
+    const num = start + idx + 1;
+    const isTarget = num === highlightLine;
+    const numStr = String(num).padStart(4);
+    const highlighted = highlightCode(l);
+    const cls = isTarget ? ' class="hl-target"' : '';
+    return `<span${cls}><span class="hl-ln">${numStr}</span> │ ${highlighted}</span>`;
+  }).join('\n');
+}
+
 function getCodeSnippetHTML(file, issue, contextLines = 8) {
-  if (!file) return '';
+  if (!file) return { html: '', scopeName: '' };
   try {
     const fullPath = resolve(process.cwd(), file);
     const content = readFileSync(fullPath, 'utf-8');
     const lines = content.split('\n');
+    const ext = extname(file).toLowerCase();
+    const isJS = JS_EXTS.has(ext);
+
+    if (isJS) {
+      const scopes = extractScopes(content);
+      if (scopes.length > 0) {
+        const byContent = findScopeByContent(scopes, lines, issue);
+        if (byContent) {
+          const { scope, matchLine } = byContent;
+          const start = Math.max(0, scope.startLine - 1);
+          const end = Math.min(lines.length, scope.endLine);
+          const html = renderSnippetLines(lines, start, end, matchLine);
+          return { html, scopeName: `${scope.kind === 'class' ? 'class' : 'fn'} ${scope.name}()` };
+        }
+        const aiLine = typeof issue.line === 'number' ? issue.line : parseInt(issue.line, 10);
+        if (aiLine > 0) {
+          const scope = findScopeForLine(scopes, aiLine);
+          if (scope) {
+            const start = Math.max(0, scope.startLine - 1);
+            const end = Math.min(lines.length, scope.endLine);
+            const html = renderSnippetLines(lines, start, end, aiLine);
+            return { html, scopeName: `${scope.kind === 'class' ? 'class' : 'fn'} ${scope.name}()` };
+          }
+        }
+      }
+    }
+
     const realLine = locateInFile(lines, issue.line, issue);
-    if (realLine <= 0) return '';
+    if (realLine <= 0) return { html: '', scopeName: '' };
     const start = Math.max(0, realLine - contextLines - 1);
     const end = Math.min(lines.length, realLine + contextLines);
-    return lines.slice(start, end).map((l, idx) => {
-      const num = start + idx + 1;
-      const isTarget = num === realLine;
-      const numStr = String(num).padStart(4);
-      const highlighted = highlightCode(l);
-      const cls = isTarget ? ' class="hl-target"' : '';
-      return `<span${cls}><span class="hl-ln">${numStr}</span> │ ${highlighted}</span>`;
-    }).join('\n');
-  } catch { return ''; }
+    const html = renderSnippetLines(lines, start, end, realLine);
+    return { html, scopeName: '' };
+  } catch { return { html: '', scopeName: '' }; }
 }
 
 function groupIssuesByFile(issues) {
@@ -155,20 +268,27 @@ export function generateHTML(review, meta, test) {
         for (const [file, fileIssues] of fileGroups) {
           const issueCards = fileIssues.map((i) => {
             let snippetHTML = '';
+            let scopeLabel = '';
             if (i.code) {
               const highlighted = i.code.split('\n').map((l) => highlightCode(l)).join('\n');
               snippetHTML = `<details class="code-detail" open><summary class="code-toggle">▶ Problematic code</summary><pre class="code-block">${highlighted}</pre></details>`;
             } else {
-              const fallback = getCodeSnippetHTML(i.file, i);
+              const { html: fallback, scopeName } = getCodeSnippetHTML(i.file, i);
+              scopeLabel = scopeName;
               if (fallback) {
-                snippetHTML = `<details class="code-detail"><summary class="code-toggle">▶ Code context (~L${i.line || '?'})</summary><pre class="code-block">${fallback}</pre></details>`;
+                const label = scopeName ? `▶ ${escHtml(scopeName)}` : `▶ Code context (~L${i.line || '?'})`;
+                snippetHTML = `<details class="code-detail" open><summary class="code-toggle">${label}</summary><pre class="code-block">${fallback}</pre></details>`;
               }
             }
+
+            const locationBadge = scopeLabel
+              ? `<span class="scope-badge">${escHtml(scopeLabel)}</span>`
+              : (i.line ? `<span class="line-badge">~L${i.line}</span>` : '');
 
             return `<div class="issue-card" style="border-left:3px solid ${metaInfo.color}">
   <div class="issue-header">
     <span style="color:${metaInfo.color};font-weight:600">${metaInfo.icon} ${escHtml(i.title)}</span>
-    ${i.line ? `<span class="line-badge">~L${i.line}</span>` : ''}
+    ${locationBadge}
   </div>
   <div class="issue-desc">${escHtml(i.desc)}</div>
   <div class="issue-fix"><strong>Fix:</strong> ${escHtml(i.fix)}</div>
@@ -243,6 +363,7 @@ h1{font-size:20px;color:#22d3ee;margin-bottom:4px}
 .issue-card:last-child{border-bottom:none}
 .issue-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .line-badge{background:#334155;color:#94a3b8;padding:1px 6px;border-radius:4px;font-size:11px;font-family:monospace}
+.scope-badge{background:#22d3ee18;color:#22d3ee;padding:1px 8px;border-radius:4px;font-size:11px;font-family:monospace;border:1px solid #22d3ee30}
 .issue-desc{color:#94a3b8;font-size:13px;margin-bottom:6px}
 .issue-fix{font-size:13px;color:#a5b4fc;margin-bottom:6px}
 .code-detail{margin-top:6px}
