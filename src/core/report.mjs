@@ -73,16 +73,27 @@ function findScopeForLine(scopes, line) {
 
 function findScopeByContent(scopes, lines, issue) {
   const needles = extractSearchNeedles(issue);
+  const aiLine = typeof issue.line === 'number' ? issue.line : parseInt(issue.line, 10) || 0;
+  let best = null;
+  let bestDist = Infinity;
+
   for (const needle of needles) {
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].includes(needle)) {
         const lineNum = i + 1;
         const scope = findScopeForLine(scopes, lineNum);
-        if (scope) return { scope, matchLine: lineNum };
+        if (!scope) continue;
+        const dist = aiLine > 0 ? Math.abs(lineNum - aiLine) : 0;
+        if (!best || dist < bestDist) {
+          best = { scope, matchLine: lineNum };
+          bestDist = dist;
+        }
+        if (dist === 0) return best;
       }
     }
+    if (best && bestDist <= 5) return best;
   }
-  return null;
+  return best;
 }
 
 const HL_KEYWORDS = new Set([
@@ -122,17 +133,43 @@ function extractSearchNeedles(issue) {
     }
   }
   const combined = `${issue.title || ''} ${issue.desc || ''} ${issue.fix || ''}`;
-  const strLiterals = combined.match(/[""`']([^"'`""]{4,})[""`']/g);
+
+  const strLiterals = combined.match(/[""\u201c`']([^"'`\u201c\u201d]{4,})[""\u201d`']/g);
   if (strLiterals) {
     for (const s of strLiterals) needles.push(s.slice(1, -1).trim());
   }
-  const identifiers = combined.match(/`([A-Za-z_$][\w$.]*(?:\.\w+)*)`/g);
-  if (identifiers) {
-    for (const id of identifiers) needles.push(id.slice(1, -1));
+
+  const backtickIds = combined.match(/`([A-Za-z_$][\w$.]*(?:\.\w+)*)`/g);
+  if (backtickIds) {
+    for (const id of backtickIds) needles.push(id.slice(1, -1));
   }
-  const KEYWORD_RE = /\b(innerHTML|dangerouslySetInnerHTML|v-html|eval\s*\(|document\.write|\.exec\(|password|secret|token|api[_-]?key|credentials|hardcod)/i;
-  const kwMatch = combined.match(KEYWORD_RE);
-  if (kwMatch) needles.push(kwMatch[1]);
+
+  const camelIds = combined.match(/\b([a-z][a-zA-Z0-9]{2,}[A-Z]\w*|[A-Z][a-z]\w*[A-Z]\w*)\b/g);
+  if (camelIds) {
+    for (const id of camelIds) {
+      if (id.length >= 4 && !['This', 'That', 'With', 'From', 'Into'].includes(id)) needles.push(id);
+    }
+  }
+
+  const EN_KW_RE = /\b(innerHTML|dangerouslySetInnerHTML|v-html|eval\s*\(|document\.write|\.exec\(|password|secret|token|api[_-]?key|credentials|hardcod|HMAC|CSRF|XSS)/i;
+  const enMatch = combined.match(EN_KW_RE);
+  if (enMatch) needles.push(enMatch[1]);
+
+  const ZH_KW_MAP = [
+    [/密码/, 'password'],
+    [/密钥|秘钥/, 'key'],
+    [/硬编码/, 'hardcod'],
+    [/注入/, 'inject'],
+    [/鉴权|授权|权限/, 'auth'],
+    [/敏感/, 'secret'],
+    [/泄露|泄漏/, 'leak'],
+    [/加密/, 'crypto'],
+    [/令牌/, 'token'],
+  ];
+  for (const [re, en] of ZH_KW_MAP) {
+    if (re.test(combined)) needles.push(en);
+  }
+
   return needles;
 }
 
