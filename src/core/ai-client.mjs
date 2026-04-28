@@ -49,7 +49,7 @@ const PROVIDERS = {
   claude:      { baseUrl: 'https://api.anthropic.com',         defaultModel: 'claude-sonnet-4-20250514' },
   qwen:        { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
   gemini:      { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.0-flash' },
-  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'Qwen/Qwen2.5-Coder-32B-Instruct' },
+  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'deepseek-ai/DeepSeek-V4-Flash' },
 };
 
 export function resolveProvider(env) {
