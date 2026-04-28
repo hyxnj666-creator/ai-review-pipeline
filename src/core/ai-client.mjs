@@ -99,7 +99,7 @@ function shouldRetryWithMaxCompletionTokens(errorText) {
     && /max_completion_tokens/i.test(errorText);
 }
 
-async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat }) {
+async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat, signal }) {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
@@ -113,6 +113,7 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   let body = buildOpenAICompatibleBody({
@@ -257,25 +258,41 @@ async function callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temper
   };
 }
 
-async function withRetry(fn, retries = 2) {
+const FETCH_TIMEOUT_MS = 90_000;
+const RETRYABLE_STATUS = new Set(['429', '500', '502', '503', '504']);
+
+function jitter(base) {
+  return Math.round(base * (0.7 + Math.random() * 0.6));
+}
+
+const RETRY_DELAYS = [3_000, 8_000, 20_000];
+
+async function withRetry(fn, retries = 3) {
   for (let i = 0; i <= retries; i++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error(`Request timed out after ${FETCH_TIMEOUT_MS / 1000}s`)), FETCH_TIMEOUT_MS);
     try {
-      return await fn();
+      return await fn(controller.signal);
     } catch (e) {
+      const isTimeout = e.message?.includes('timed out') || e.name === 'AbortError' || (e.cause && e.cause.message?.includes('timed out'));
       const status = e.message?.match(/API (\d+)/)?.[1];
-      const retryable = !status || status === '429' || status === '500' || status === '502' || status === '503';
+      const retryable = isTimeout || !status || RETRYABLE_STATUS.has(status);
       if (i >= retries || !retryable) throw e;
-      const delay = Math.min(1000 * 2 ** i, 8000);
-      await new Promise((r) => setTimeout(r, delay));
+      const base = RETRY_DELAYS[Math.min(i, RETRY_DELAYS.length - 1)];
+      const wait = jitter(base);
+      process.stderr.write(`[ai-rp] attempt ${i + 1} failed (${isTimeout ? 'timeout' : status || e.message?.slice(0, 40)}), retrying in ${Math.round(wait / 1000)}s…\n`);
+      await new Promise((r) => setTimeout(r, wait));
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
 
 export async function callAI({ baseUrl, apiKey, model, systemPrompt, prompt, temperature = 0.3, maxTokens = 8192, provider = 'openai', stream = false, onToken, responseFormat }) {
-  return withRetry(() => {
+  return withRetry((signal) => {
     if (provider === 'claude') {
       return callClaude({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken });
     }
-    return callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat });
+    return callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prompt, temperature, maxTokens, stream, onToken, responseFormat, signal });
   });
 }
