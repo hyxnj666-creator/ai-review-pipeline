@@ -195,6 +195,8 @@ function renderSnippetLines(lines, start, end, highlightLine) {
   }).join('\n');
 }
 
+const MAX_SCOPE_LINES = 60;
+
 function getCodeSnippetHTML(file, issue, contextLines = 8) {
   if (!file) return { html: '', scopeName: '' };
   try {
@@ -210,8 +212,16 @@ function getCodeSnippetHTML(file, issue, contextLines = 8) {
         const byContent = findScopeByContent(scopes, lines, issue);
         if (byContent) {
           const { scope, matchLine } = byContent;
-          const start = Math.max(0, scope.startLine - 1);
-          const end = Math.min(lines.length, scope.endLine);
+          const scopeLen = scope.endLine - scope.startLine + 1;
+          if (scopeLen <= MAX_SCOPE_LINES) {
+            const start = Math.max(0, scope.startLine - 1);
+            const end = Math.min(lines.length, scope.endLine);
+            const html = renderSnippetLines(lines, start, end, matchLine);
+            return { html, scopeName: `${scope.kind === 'class' ? 'class' : 'fn'} ${scope.name}()` };
+          }
+          // scope too large — fall through to context window, but keep scope name
+          const start = Math.max(0, matchLine - contextLines - 1);
+          const end = Math.min(lines.length, matchLine + contextLines);
           const html = renderSnippetLines(lines, start, end, matchLine);
           return { html, scopeName: `${scope.kind === 'class' ? 'class' : 'fn'} ${scope.name}()` };
         }
@@ -219,8 +229,15 @@ function getCodeSnippetHTML(file, issue, contextLines = 8) {
         if (aiLine > 0) {
           const scope = findScopeForLine(scopes, aiLine);
           if (scope) {
-            const start = Math.max(0, scope.startLine - 1);
-            const end = Math.min(lines.length, scope.endLine);
+            const scopeLen = scope.endLine - scope.startLine + 1;
+            if (scopeLen <= MAX_SCOPE_LINES) {
+              const start = Math.max(0, scope.startLine - 1);
+              const end = Math.min(lines.length, scope.endLine);
+              const html = renderSnippetLines(lines, start, end, aiLine);
+              return { html, scopeName: `${scope.kind === 'class' ? 'class' : 'fn'} ${scope.name}()` };
+            }
+            const start = Math.max(0, aiLine - contextLines - 1);
+            const end = Math.min(lines.length, aiLine + contextLines);
             const html = renderSnippetLines(lines, start, end, aiLine);
             return { html, scopeName: `${scope.kind === 'class' ? 'class' : 'fn'} ${scope.name}()` };
           }
