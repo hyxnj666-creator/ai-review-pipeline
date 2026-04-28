@@ -2,7 +2,7 @@
 
 AI 驱动的代码质量流水线 CLI —— Review → 测试 → 报告，一条命令搞定。加 `--fix` 启用自动修复循环。
 
-**[English](./README.md) | 中文**
+**[English](./README.md) | 中文** · [![Linux DO](https://img.shields.io/badge/社区讨论-Linux%20DO-blue)](https://linux.do)
 
 ---
 
@@ -416,6 +416,10 @@ ai-rp test --staged                            # staged 文件测试
 # ── 初始化 ──
 ai-rp init                                     # 生成配置文件
 ```
+
+## 社区
+
+- [Linux DO 讨论](https://linux.do) — 中文社区讨论帖
 
 ## License
 

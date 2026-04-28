@@ -417,6 +417,10 @@ ai-rp test --staged                            # staged file tests
 ai-rp init                                     # generate config file
 ```
 
+## Community
+
+- [Linux DO Discussion](https://linux.do) — Chinese developer community
+
 ## License
 
 MIT
