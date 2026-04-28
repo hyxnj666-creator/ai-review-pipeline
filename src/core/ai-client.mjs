@@ -49,7 +49,7 @@ const PROVIDERS = {
   claude:      { baseUrl: 'https://api.anthropic.com',         defaultModel: 'claude-sonnet-4-20250514' },
   qwen:        { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
   gemini:      { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultModel: 'gemini-2.0-flash' },
-  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'deepseek-ai/DeepSeek-V4-Flash' },
+  siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',    defaultModel: 'Qwen/Qwen3-8B' },
 };
 
 export function resolveProvider(env) {
@@ -80,6 +80,10 @@ function shouldUseOpenAIMaxCompletionTokens(baseUrl, model) {
   return normalizedBaseUrl.includes('api.openai.com') && /^gpt-5([.-]|$)/.test(normalizedModel);
 }
 
+function isQwen3Model(model) {
+  return /qwen3/i.test(String(model || ''));
+}
+
 function buildOpenAICompatibleBody({ model, messages, temperature, maxTokens, shouldStream, responseFormat, useMaxCompletionTokens = false }) {
   const body = { model, messages, temperature };
   if (typeof maxTokens === 'number' && Number.isFinite(maxTokens)) {
@@ -90,6 +94,8 @@ function buildOpenAICompatibleBody({ model, messages, temperature, maxTokens, sh
     body.stream_options = { include_usage: true };
   }
   if (responseFormat && !shouldStream) body.response_format = responseFormat;
+  // Qwen3 defaults to thinking mode; disable it for structured review output
+  if (isQwen3Model(model)) body.enable_thinking = false;
   return body;
 }
 
@@ -176,8 +182,9 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, prom
   }
 
   const data = await resp.json();
+  const raw = data.choices?.[0]?.message?.content ?? '';
   return {
-    content: data.choices?.[0]?.message?.content ?? '',
+    content: raw.replace(/<think>[\s\S]*?<\/think>\s*/g, ''),
     tokens: data.usage,
   };
 }
