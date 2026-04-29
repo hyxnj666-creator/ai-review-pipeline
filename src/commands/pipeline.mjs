@@ -249,7 +249,7 @@ export async function run(args) {
   const fixMode = args.includes('--fix');
   const full = args.includes('--full');
   const noCommit = args.includes('--no-commit');
-  const noTest = args.includes('--no-test') || config.test.enabled === false;
+  const noTest = args.includes('--no-test') || config.test.enabled === false || env.builtinFallback;
   const noReport = args.includes('--no-report');
   const jsonOutput = args.includes('--json');
   const file = args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
